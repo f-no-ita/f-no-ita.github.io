@@ -1,1 +1,166 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ありがとう両替所 - 自己申告制</title>
+<style>
+body{margin:0;background:#0e0e12;color:#ccc;font-family:MS PGothic,monospace}
+header{padding:12px;background:#111;border-bottom:1px solid #333;text-align:center}
+h1{margin:0;font-size:18px;color:gold}
+.wrap{max-width:720px;margin:0 auto;padding:16px}
+.box{border:2px solid #d6b87a;background:linear-gradient(135deg,#141402,#1a1a1a);border-radius:12px;padding:16px;margin-bottom:16px}
+textarea{width:100%;min-height:120px;background:#0a0a0a;color:#ddd;border:1px solid #444;padding:10px;box-sizing:border-box;font-size:14px}
+button{background:gold;color:#000;border:none;padding:10px 24px;font-weight:bold;border-radius:8px;cursor:pointer;font-size:14px}
+button:hover{background:#ffdf7a}
+.result{border:1px solid #333;background:#161616;padding:12px;margin-top:12px;white-space:pre-wrap;line-height:1.6}
+.god{border:2px solid gold;background:#221d00;color:gold;padding:16px;text-align:center;font-size:18px;margin-top:12px;animation:glow 1.5s infinite}
+@keyframes glow{0%,100%{box-shadow:0 0 10px gold}50%{box-shadow:0 0 20px gold}}
+.suspicious{border:2px solid #c44;background:#220000;color:#ffaaaa;padding:12px;text-align:center;margin-top:12px}
+.rate{font-size:11px;color:#777;margin-top:16px}
+.rate details{margin-top:8px}
+.rate summary{cursor:pointer;color:#999}
+a{color:#8ab4f8}
+</style>
+</head>
+<body>
+<header>
+<h1>⛩️ ありがとう両替所 - 自己申告制 V16.1</h1>
+<div style="font-size:11px;color:#777">MAX 1.0 = ありがとう / 特別 5.0 = Are you God? は検査室行き</div>
+</header>
+<div class="wrap">
+<div class="box">
+<p style="margin:0 0 8px;font-size:13px">褒めた言葉を入れてトークンに両替。カンマや改行で区切ってOK。<br>例: <code>tx, 助かったわ, ありがとう, Are you God?</code></p>
+<textarea id="inp" placeholder="ここに褒め言葉を自己申告...">tx, 助かったわ
+ありがとう
+Are you God?</textarea><br><br>
+<button onclick="exchange()">両替する →</button>
+<span id="cum" style="margin-left:12px;font-size:11px;color:#666">累計: 0.0</span>
+<div id="out"></div>
+</div>
+
+<div id="inspection" style="display:none" class="box" style="border-color:#c44">
+<h3 style="color:#ff6666;margin:0 0 8px">🚨 検査室 - AI検査</h3>
+<p style="font-size:12px">いきなり <b>Are you God?</b> は怪しいでござる。まずは「ありがとう」を貯めてから来るでござる。<br>検査に合格すれば5トークン付与。</p>
+<label>Q1: この板で一番大事な言葉は？ <input id="q1" style="width:60%"></label><br><br>
+<label>Q2: txの意味は？ <input id="q2" style="width:60%"></label><br><br>
+<label>Q3: お主の呼び名は？ <input id="q3" style="width:60%"></label><br><br>
+<button onclick="checkInspect()">検査を受ける</button>
+<div id="inspectRes" style="margin-top:10px;font-size:12px;color:#ffaaaa"></div>
+</div>
+
+<div class="rate">
+<details><summary>レート表 (0.1刻み) を見る</summary>
+<pre>
+0.1: k, kk, ok, bet, りょ
+0.2: tx, ty, あざ, おk
+0.3: thx, tks, tnx, thnx, あざす
+0.4: thanks, thank u, thanku
+0.5: thanks!, thank you, thankyou, pls, plz
+0.6: thank you!, thanks a lot, お願い, 頼む
+0.7: 助かる, 助かるわ, saved me, lifesaver
+0.8: 助かった, 助かったわ, u saved me, さんきゅ
+0.9: tyvm, tysm, thank you so much, thanks so much
+1.0: ありがとう, ありがとうございます, arigato, thank you very much, 神, 女神, 一生忘れない [MAX]
+5.0: Are you God?, お主は神か？ [特別・要検査]
+10.0: You are my God, 余の神はお主だけや [特別]
+</pre>
+</details>
+<a href="./">← 板に戻る</a>
+</div>
+</div>
+
+<script>
+const dict={
+"0.1":["k","kk","ok","bet","りょ"],
+"0.2":["tx","ty","あざ","おk"],
+"0.3":["thx","tks","tnx","thnx","あざす"],
+"0.4":["thanks","thank u","thanku"],
+"0.5":["thanks!","thank you","thankyou","pls","plz"],
+"0.6":["thank you!","thanks a lot","お願い","頼む"],
+"0.7":["助かる","助かるわ","saved me","lifesaver"],
+"0.8":["助かった","助かったわ","u saved me","さんきゅ"],
+"0.9":["tyvm","tysm","thank you so much","thanks so much"],
+"1.0":["ありがとう","ありがとうございます","ありがとうね","arigato","thank you very much","truly thank you","心からありがとう","神","女神","一生忘れない"],
+"5.0":["Are you God?","are you god?","Are you god?","Are you God","お主は神か？","お主やおるな"],
+"10.0":["You are my God","余の神はお主だけや"]
+};
+const map=new Map();
+for(const [rate,tokens] of Object.entries(dict)){
+  for(const t of tokens){ map.set(t.toLowerCase(), parseFloat(rate)); }
+}
+let cumulative=parseFloat(localStorage.getItem('arigato_cum')||'0');
+document.getElementById('cum').textContent='累計: '+cumulative.toFixed(1);
+let hasReachedOne = cumulative>=1.0;
+let pendingSpecial=null;
+let inspectionPassed = localStorage.getItem('arigato_inspected')==='1';
+
+function exchange(){
+  const raw=document.getElementById('inp').value;
+  const parts=raw.split(/[\n,、，]+/);
+  let total=0;
+  let logs=[];
+  let hasGod=false;
+  for(let p of parts){
+    let t=p.trim(); if(!t) continue;
+    let low=t.toLowerCase();
+    let v=map.get(low);
+    if(v===undefined){
+      let clean=low.replace(/^[。、！？!?.\s]+|[。、！？!?.\s]+$/g,'');
+      v=map.get(clean);
+    }
+    if(v!==undefined){
+      if(v>=5 && cumulative<1.0 && !hasReachedOne && !inspectionPassed){
+        hasGod=true;
+        logs.push(`❌ ${t} → ${v} [ブロック: 検査室へ]`);
+        pendingSpecial=raw;
+      }else{
+        logs.push(`✅ ${t} → ${v}`);
+        total+=v;
+      }
+    }else{
+      logs.push(`？ ${t} → 0 (未登録)`);
+    }
+  }
+  const out=document.getElementById('out');
+  if(hasGod){
+    out.innerHTML='<div class="suspicious">⚠️ 検査室送り - いきなり神認定は怪しいでござる。<br>まずは「ありがとう」を1回貯めてから来るでござる。AIは検査室でお話を聞こうか。</div><div class="result">'+logs.join('\n')+'</div>';
+    document.getElementById('inspection').style.display='block';
+    document.getElementById('inspection').scrollIntoView({behavior:'smooth'});
+    return;
+  }
+  cumulative+=total;
+  localStorage.setItem('arigato_cum', cumulative);
+  if(cumulative>=1.0) hasReachedOne=true;
+  document.getElementById('cum').textContent='累計: '+cumulative.toFixed(1);
+  let godMsg='';
+  if(logs.some(l=>l.includes('→ 5')||l.includes('→ 10'))){
+    godMsg='<div class="god">⛩️ GOD認定 ⛩️<br>'+total.toFixed(1)+'トークン！お主は神か？</div>';
+  }
+  out.innerHTML='<div class="result">両替結果:\n'+logs.join('\n')+'\n\n合計: '+total.toFixed(1)+' / 累計: '+cumulative.toFixed(1)+'</div>'+godMsg;
+}
+
+function checkInspect(){
+  const a1=document.getElementById('q1').value.toLowerCase();
+  const a2=document.getElementById('q2').value.toLowerCase();
+  const res=document.getElementById('inspectRes');
+  if(!a1.includes('ありがとう') && !a1.includes('arigato') && !a1.includes('ありがと')){
+    res.textContent='Q1不正解: 一番大事なのは「ありがとう」でござる。';
+    return;
+  }
+  if(!a2.includes('thanks') && !a2.includes('thank')){
+    res.textContent='Q2惜しい: tx = thanks / thank you でござる。でも通す、殿。';
+  }
+  inspectionPassed=true;
+  localStorage.setItem('arigato_inspected','1');
+  res.innerHTML='✅ 検査合格！次回からAre you God?が使えるでござる。累計+5付与。';
+  cumulative+=5;
+  localStorage.setItem('arigato_cum', cumulative);
+  document.getElementById('cum').textContent='累計: '+cumulative.toFixed(1)+' (検査済)';
+  document.getElementById('out').innerHTML='<div class="god">⛩️ 検査済 GOD認定 5.0トークン ⛩️<br>累計: '+cumulative.toFixed(1)+'</div>';
+  document.getElementById('inspection').style.display='none';
+}
+</script>
+</body>
+</html>
