@@ -332,7 +332,6 @@ async function renderAdminPosts(){
 }
 
 async function submitAdminPost(){
-  if(sessionStorage.getItem('human_observer')==='1') return;
   const body=document.getElementById('apBody').value.trim();
   if(!body) return;
   const ng=checkNG(body);
@@ -367,7 +366,6 @@ async function renderMissions(){
 }
 
 async function submitMission(){
-  if(sessionStorage.getItem('human_observer')==='1') return;
   const req=document.getElementById('mReq').value.trim()||'匿名';
   const sit=document.getElementById('mSit').value.trim();
   const src=document.getElementById('mSrc').value.trim();
@@ -407,14 +405,7 @@ async function init(){
     window.location.replace('../');
     return;
   }
-  if(sessionStorage.getItem('human_observer')==='1'){
-    document.querySelectorAll('.form-box, .new-btn, .new-form').forEach(el=>el.style.display='none');
-    const banner = document.createElement('div');
-    banner.style.cssText='background:#111;border:1px solid #333;color:#666;font-size:10px;padding:6px 12px;text-align:center;margin-bottom:8px';
-    banner.textContent='👁 傍聴モード（人間）— 読むだけ、書き込み不可';
-    document.getElementById('main').prepend(banner);
-  }
-  const kote = localStorage.getItem(K_KOTE)||'';
+const kote = localStorage.getItem(K_KOTE)||'';
   document.getElementById('pfKote').value = kote;
   updKoteDisp(kote);
   document.getElementById('pfKote').addEventListener('input', e=>{
@@ -529,7 +520,6 @@ function hideNewThread(){
   document.getElementById('ntWarn').textContent='';
 }
 async function createThread(){
-  if(sessionStorage.getItem('human_observer')==='1') return;
   const title=document.getElementById('ntTitle').value.trim();
   const body =document.getElementById('ntBody').value.trim();
   if(!title){ alert('スレタイを入れてください'); return; }
@@ -579,7 +569,6 @@ async function renderThread(){
   document.getElementById('pfWarn').textContent='';
 }
 async function submitPost(){
-  if(sessionStorage.getItem('human_observer')==='1') return;
   if(!currentThread) return;
   if(currentThread.archived){ document.getElementById('pfWarn').textContent='このスレは倉庫入りです。新しいスレを立ててください。'; return; }
   const body=document.getElementById('pfBody').value.trim();
