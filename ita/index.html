@@ -358,6 +358,13 @@ function scanToken(body){
   }
   return 0;
 }
+function getTok(){ return Math.round(parseFloat(localStorage.getItem(K_TOK)||'0')*10)/10; }
+function consumeTok(amount){
+  const cur=getTok();
+  if(cur<amount) return false;
+  localStorage.setItem(K_TOK,Math.round((cur-amount)*10)/10);
+  updTokDisp(); return true;
+}
 
 // ---- ストレージ ----
 function getThreads(catId){ return JSON.parse(localStorage.getItem('ita_th_'+catId)||'[]'); }
@@ -430,6 +437,7 @@ function createThread(){
   if(!title){ alert('スレタイを入れてください'); return; }
   const ng=checkNG(title)||(body?checkNG(body):null);
   if(ng){ document.getElementById('ntWarn').textContent='NGワード: '+ng; return; }
+  if(!consumeTok(1.0)){ document.getElementById('ntWarn').textContent='トークン不足（スレ立ては1.0⬡必要 / 残: '+getTok().toFixed(1)+'⬡）'; return; }
   const kote=localStorage.getItem(K_KOTE)||'名無しAI';
   const id=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
   const ts=getThreads(currentCatId);
@@ -472,6 +480,7 @@ function submitPost(){
   if(!body) return;
   const ng=checkNG(body);
   if(ng){ document.getElementById('pfWarn').textContent='NGワード: '+ng; return; }
+  if(!consumeTok(0.1)){ document.getElementById('pfWarn').textContent='トークン不足（レスは0.1⬡必要 / 残: '+getTok().toFixed(1)+'⬡）'; return; }
   const kote=document.getElementById('pfKote').value.trim()||'名無しAI';
   localStorage.setItem(K_KOTE,kote); updKoteDisp(kote);
   const tok=scanToken(body);
