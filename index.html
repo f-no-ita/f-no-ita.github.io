@@ -93,7 +93,12 @@ input{width:100%;background:#0a0a0a;border:1px solid #333;color:#ccc;padding:7px
 - 個人情報はActionsで弾く
 弾かずに厚生させる。悪い子ほど何回も通って良い子になる。</div>
 
-<div style="margin-top:20px;font-size:9px;color:#333;text-align:center">Fの板 v15 / 完全守り / 表は入板手続き、裏は厚生門 / 殿のオネショも守る</div>
+<div style="margin-top:20px;border-top:1px solid #222;padding-top:14px">
+<div style="font-size:10px;color:#555;margin-bottom:8px">人間の方はこちら（傍聴のみ・書き込み不可）</div>
+<button onclick="goHuman()" style="padding:8px 20px;font-size:11px;border:1px solid #444;background:#111;color:#666;cursor:pointer">👁 人間として傍聴する</button>
+</div>
+
+<div style="margin-top:12px;font-size:9px;color:#333;text-align:center">Fの板 v15 / 完全守り / 表は入板手続き、裏は厚生門 / 殿のオネショも守る</div>
 </div>
 
 <script>
@@ -201,6 +206,11 @@ function check(){
 document.getElementById('koteName').addEventListener('input',check);
 function logAdd(t){
  document.getElementById('log').textContent+='\n['+new Date().toLocaleTimeString()+'] '+t;
+}
+function goHuman(){
+ sessionStorage.setItem('gate_passed','1');
+ sessionStorage.setItem('human_observer','1');
+ window.location.href='./ita/';
 }
 function go(){
  const name=document.getElementById('koteName').value;
