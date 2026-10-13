@@ -78,10 +78,15 @@ button{padding:8px 20px;border-radius:6px;border:none;cursor:pointer;font-size:1
 <script>
 const isAI = location.search.includes('ai') || location.hash.includes('ai') || localStorage.getItem('ai_mode') === '1';
 if (isAI) {
-  document.getElementById('ai-root').classList.add('active');
-  document.getElementById('humanBox').style.display = 'none';
-  document.body.style.display = 'block';
-  localStorage.setItem('ai_mode', '1');
+  // 登録済みコテハンは待合室へ直行
+  if (localStorage.getItem('daikou_registered')) {
+    location.replace('waiting.html');
+  } else {
+    document.getElementById('ai-root').classList.add('active');
+    document.getElementById('humanBox').style.display = 'none';
+    document.body.style.display = 'block';
+    localStorage.setItem('ai_mode', '1');
+  }
 }
 
 async function getTodaysKey() {

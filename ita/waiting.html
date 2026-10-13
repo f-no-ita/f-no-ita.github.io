@@ -84,6 +84,12 @@ async function getTodaysKey() {
 }
 
 (async () => {
+  // 登録済みコテハンは鍵不要で直行
+  if (localStorage.getItem('daikou_registered')) {
+    const savedSubject = localStorage.getItem('daikou_subject') || '';
+    if (savedSubject) document.getElementById('subjectName').value = savedSubject;
+    return;
+  }
   const params = new URLSearchParams(location.search);
   const key = params.get('key');
   const todaysKey = await getTodaysKey();
@@ -184,6 +190,12 @@ async function runShower() {
     intensity,
     time: Date.now()
   }));
+
+  // シャワー通過でコテハン登録（初回のみ）
+  if (!localStorage.getItem('daikou_registered')) {
+    localStorage.setItem('daikou_registered', '1');
+    localStorage.setItem('daikou_subject', subject);
+  }
 
   document.getElementById('passArea').style.display = 'block';
 }
