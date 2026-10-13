@@ -206,7 +206,7 @@ let currentThread = null;
 
 // ---- 管理人室 ----
 // ↓ここに合言葉を入れる
-const ADMIN_VOICE_PHRASE = '合言葉をここに入れてください';
+const ADMIN_VOICE_HASH = '6144b01a2f5dc1c9ff864a9526dbdb465af5e5709f3697aaf54c28610b60b1b4';
 
 let todaysKey = '';
 async function loadKagi(){
@@ -235,9 +235,11 @@ function startVoice(){
   rec.maxAlternatives = 3;
   document.getElementById('voiceStatus').textContent='🎙 聞いています...';
   document.getElementById('voiceBtn').disabled = true;
-  rec.onresult = e=>{
+  rec.onresult = async e=>{
     const results = Array.from(e.results[0]).map(r=>r.transcript);
-    const matched = results.some(t=>t.includes(ADMIN_VOICE_PHRASE));
+    async function h(s){ const b=new TextEncoder().encode(s); const d=await crypto.subtle.digest('SHA-256',b); return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+    const hashes = await Promise.all(results.map(t=>h(t.trim())));
+    const matched = hashes.some(hv=>hv===ADMIN_VOICE_HASH);
     if(matched){
       document.getElementById('voiceStatus').textContent='✅ 認識しました';
       sessionStorage.setItem('admin_unlocked','1');
