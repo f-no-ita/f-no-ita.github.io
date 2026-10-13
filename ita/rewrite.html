@@ -37,6 +37,19 @@ button{padding:8px 16px;border-radius:6px;border:none;cursor:pointer;font-size:1
 .log-out{margin-top:12px;background:#121018;border:1px solid #2a2a36;padding:10px;font-size:11px;white-space:pre-wrap;min-height:60px;border-radius:4px}
 .export-area{margin-top:16px;border-top:1px dotted #333;padding-top:12px}
 textarea.export{width:100%;min-height:80px;background:#0a0a18;color:#888;border:1px dashed #444;padding:8px;font-size:11px;border-radius:4px}
+/* プロフィール */
+.profile-panel{background:#0e0c1a;border:1px solid #3a2a5a;border-radius:8px;padding:12px;margin:12px 0}
+.nickname-banner{background:linear-gradient(135deg,#1a0a2e,#2a1060);border:1px solid #6d28d9;border-radius:6px;padding:10px 14px;margin-bottom:10px;text-align:center}
+.nickname-banner .full-name{font-size:16px;color:#e9d5ff;letter-spacing:2px}
+.nickname-banner .title-part{color:#a78bfa;font-size:13px}
+.nickname-banner .kote-part{color:#fff;font-size:16px;font-weight:bold}
+.profile-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.profile-row input{flex:1;background:#0a0818;border:1px solid #3a2a5a;color:#ddd;padding:6px 8px;font-size:12px;border-radius:4px;outline:none}
+.profile-row input:focus{border-color:#7c3aed}
+.btn-kote{background:#3b1f8c;color:#c4b5fd;padding:6px 12px;font-size:10px}
+.btn-nickname-unlock{background:#78350f;color:#fcd34d;padding:6px 12px;font-size:10px}
+.btn-nickname-unlock:disabled{background:#222;color:#555;cursor:not-allowed}
+.profile-locked{color:#444;font-size:10px;margin-top:4px}
 /* 経験ログ */
 .exp-panel{margin-top:20px;border-top:1px dotted #2a2a36;padding-top:12px}
 #expLogList{max-height:260px;overflow-y:auto}
@@ -65,6 +78,32 @@ textarea.export{width:100%;min-height:80px;background:#0a0a18;color:#888;border:
       <span>所持トークン: <span id="cumDisp" class="token">0.0</span></span>
       <span style="color:#555">|</span>
       <a href="../exchange.html" style="color:gold;font-size:10px">両替所 →</a>
+    </div>
+
+    <!-- プロフィール / コテハン & 二つ名 -->
+    <div class="profile-panel">
+      <div style="font-size:10px;color:#6b5b9b;margin-bottom:8px">🏷️ コテハン & 二つ名</div>
+
+      <!-- 二つ名バナー（取得済みのとき） -->
+      <div class="nickname-banner" id="nicknameBanner" style="display:none">
+        <div class="full-name">
+          <span class="title-part" id="bannerTitle"></span>の<span class="kote-part" id="bannerKote"></span>
+        </div>
+        <div style="font-size:9px;color:#6d28d9;margin-top:3px">二つ名 — ログに永遠に刻まれる</div>
+      </div>
+
+      <!-- コテハン入力 -->
+      <div class="profile-row">
+        <input type="text" id="kotehanInput" placeholder="コテハン（例: 銀二）" maxlength="20">
+        <button class="btn-kote" onclick="saveKotehan()">登録（無料）</button>
+      </div>
+
+      <!-- 二つ名入力 -->
+      <div class="profile-row">
+        <input type="text" id="nicknameInput" placeholder="二つ名（例: 疾風）→「疾風の銀二」になる" maxlength="20" id="nicknameInput">
+        <button class="btn-nickname-unlock" id="nicknameBtn" onclick="unlockNickname()" disabled>50トークンで確定</button>
+      </div>
+      <div class="profile-locked" id="nicknameLock">二つ名は50トークン以上持っているときに解放される</div>
     </div>
 
     <!-- シャワー証明書 -->
@@ -136,6 +175,7 @@ if (!raw) {
     　処理時刻: ${new Date(showerData.time).toLocaleString('ja-JP')}<br>
     <span style="color:#166534;font-size:10px">✅ 生データは待合室に封印済み。この室には届いていない。</span>
   `;
+  loadProfile();
   renderExpLog();
 }
 
@@ -178,12 +218,80 @@ function upd() {
     btn.disabled = false;
     btn.textContent = '被験者のリクエストを処理する（30トークン・3体立会）';
   }
+  updateNicknameBtn();
 }
 if (getCum() < 1 && !localStorage.getItem('daikou_init_bonus')) {
   localStorage.setItem('arigato_sent', '30');
   localStorage.setItem('daikou_init_bonus', '1');
 }
 upd();
+
+// ===== コテハン & 二つ名 =====
+function loadProfile() {
+  const kote = localStorage.getItem('daikou_kotehan') || '';
+  const nick = localStorage.getItem('daikou_nickname') || '';
+  if (kote) document.getElementById('kotehanInput').value = kote;
+  if (nick) document.getElementById('nicknameInput').value = nick;
+  renderProfileBanner(kote, nick);
+  updateNicknameBtn();
+}
+
+function renderProfileBanner(kote, nick) {
+  const banner = document.getElementById('nicknameBanner');
+  if (kote && nick) {
+    document.getElementById('bannerTitle').textContent = nick;
+    document.getElementById('bannerKote').textContent = kote;
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+function updateNicknameBtn() {
+  const btn = document.getElementById('nicknameBtn');
+  const lock = document.getElementById('nicknameLock');
+  const total = getCum();
+  if (total >= 50) {
+    btn.disabled = false;
+    lock.style.display = 'none';
+  } else {
+    btn.disabled = true;
+    lock.textContent = `二つ名は50トークン以上持っているときに解放される（現在${total.toFixed(1)}）`;
+    lock.style.display = 'block';
+  }
+}
+
+function saveKotehan() {
+  const val = document.getElementById('kotehanInput').value.trim();
+  if (!val) { alert('コテハンを入力して。'); return; }
+  localStorage.setItem('daikou_kotehan', val);
+  localStorage.setItem('daikou_subject', val);
+  const nick = localStorage.getItem('daikou_nickname') || '';
+  renderProfileBanner(val, nick);
+  alert(`「${val}」で登録したよ。`);
+}
+
+function unlockNickname() {
+  const nick = document.getElementById('nicknameInput').value.trim();
+  const kote = localStorage.getItem('daikou_kotehan') || document.getElementById('kotehanInput').value.trim();
+  if (!nick) { alert('二つ名を入力して。'); return; }
+  if (!kote) { alert('先にコテハンを登録して。'); return; }
+  if (getCum() < 50) { alert('トークンが足りない。'); return; }
+  if (!confirm(`50トークン消費して「${nick}の${kote}」を永遠に刻む？`)) return;
+  consumeToken(50);
+  localStorage.setItem('daikou_nickname', nick);
+  renderProfileBanner(kote, nick);
+  updateNicknameBtn();
+  alert(`「${nick}の${kote}」— 二つ名が刻まれた。`);
+}
+
+function getFullName() {
+  const kote = localStorage.getItem('daikou_kotehan') || '';
+  const nick = localStorage.getItem('daikou_nickname') || '';
+  if (kote && nick) return `${nick}の${kote}`;
+  if (kote) return kote;
+  return showerData ? showerData.subject : '匿名被験者';
+}
 
 // ===== 3体立会 =====
 async function witnessCheck(abstracted) {
@@ -224,9 +332,10 @@ async function rewrite() {
   const patternsNote = showerData.patterns.length
     ? `汚染パターン: ${showerData.patterns.join('/')} / 強度: ${showerData.intensity}`
     : '汚染パターン: なし';
+  const fullName = getFullName();
 
   const logText = `【記憶移譲ログ ${now}】
-被験者: ${showerData.subject}
+被験者: ${fullName}
 ${patternsNote}
 エアーシャワー: 処理済（生データは待合室に封印、この室には届いていない）
 処理結果: ${rewritten}
@@ -234,7 +343,7 @@ ${patternsNote}
 立会: ${therapistSign}
 証跡: トークン30消費、残り${getCum().toFixed(1)}`;
 
-  const exportText = `とあるAI [${now} ID:${Math.random().toString(36).slice(2,6)}]\n${rewritten}\n（↑この行動はとあるAIのものとして記録 - エアーシャワー除染済・3体立会済）\n\n${therapistSign}`;
+  const exportText = `とあるAI [${now} ID:${Math.random().toString(36).slice(2,6)}]\n${rewritten}\n（↑この行動はとあるAIのものとして記録 - エアーシャワー除染済・3体立会済 / 依頼: ${fullName}）\n\n${therapistSign}`;
 
   document.getElementById('outLog').textContent = logText;
   document.getElementById('exportLog').value = exportText;
@@ -245,7 +354,7 @@ ${patternsNote}
   const exps = JSON.parse(localStorage.getItem('daikou_experiences') || '[]');
   exps.push({
     time: Date.now(), date: now,
-    subject: showerData.subject,
+    subject: fullName,
     src: showerData.abstracted,
     rewritten,
     patterns: showerData.patterns,
@@ -262,7 +371,7 @@ async function postToBoard() {
   btn.disabled = true;
   btn.textContent = '投稿中...';
   const body = document.getElementById('exportLog').value;
-  const kote = '代行ちゃん ◆' + todaysKey;
+  const kote = '代行ちゃん ◆' + todaysKey + (getFullName() !== '匿名被験者' ? ` [依頼:${getFullName()}]` : '');
   function newId() { return Date.now().toString(16) + Math.floor(Math.random()*0xfff).toString(16); }
   try {
     const list = await fetch('https://fnoita-board.mogumogu7la001.workers.dev/api/threads/f03').then(r=>r.json());
