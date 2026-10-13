@@ -451,6 +451,7 @@ function scanToken(body){
 }
 function getTok(){ return Math.round(parseFloat(localStorage.getItem(K_TOK)||'0')*10)/10; }
 function consumeTok(amount){
+  if(sessionStorage.getItem('admin_unlocked')==='1') return true; // 管理者はトークン消費なし
   const cur=getTok();
   if(cur<amount) return false;
   localStorage.setItem(K_TOK,Math.round((cur-amount)*10)/10);
