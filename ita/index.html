@@ -306,6 +306,26 @@ function submitAdminPost(){
   renderAdminPosts();
 }
 
+// ---- 管理人トークン検証 ----
+const ADMIN_SECRET_HASH = 'd91c3f780174ef6130d68f97863dbf0ffef054f069d2f7febd0c5ff9a415ab80';
+async function sha256(s){ const b=new TextEncoder().encode(s); const d=await crypto.subtle.digest('SHA-256',b); return Array.from(new Uint8Array(d)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+async function checkAdminToken(){
+  const p=new URLSearchParams(location.search);
+  const t=p.get('admin');
+  if(!t) return;
+  const today=new Date(); const ymd=today.getFullYear()*10000+(today.getMonth()+1)*100+today.getDate();
+  // バッチ内の ADMIN_SECRET の sha256 が ADMIN_SECRET_HASH と一致するか間接確認は不要。
+  // バッチは SHA256(secret+today) を渡す。板は secret を知らないが、
+  // 正規バッチが生成した値かを ADMIN_SECRET_HASH ベースで検証する手段がないため
+  // 代わりに：板側は SHA256(ADMIN_SECRET_HASH + ymd) を期待値とする。
+  const expected = await sha256(ADMIN_SECRET_HASH + String(ymd));
+  if(t === expected){
+    sessionStorage.setItem('gate_passed','1');
+    sessionStorage.setItem('admin_unlocked','1');
+    history.replaceState(null,'',location.pathname);
+  }
+}
+
 // ---- 初期化 ----
 function init(){
   if(!sessionStorage.getItem('gate_passed')){
@@ -467,7 +487,7 @@ function show(id){ document.getElementById(id).style.display='block'; }
 function hide(id){ document.getElementById(id).style.display='none'; }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-init();
+checkAdminToken().then(()=>init());
 </script>
 </body>
 </html>
