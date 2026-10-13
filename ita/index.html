@@ -142,6 +142,10 @@ a{color:#7c7ccc;text-decoration:none}
       <button class="btn-s" onclick="hideNewThread()">キャンセル</button>
     </div>
     <div id="threadList"></div>
+    <div id="archiveList" style="margin-top:16px;display:none">
+      <div style="font-size:10px;color:#444;padding:6px 0;border-top:1px solid #1a1a1a">📦 過去ログ倉庫</div>
+      <div id="archiveItems"></div>
+    </div>
   </div>
 
   <!-- スレ内：レス一覧 -->
@@ -404,21 +408,42 @@ function showCat(){
 }
 function renderThreadList(){
   const ts=getThreads(currentCatId);
+  const active=ts.filter(t=>!t.archived).reverse();
+  const archived=ts.filter(t=>t.archived).reverse();
   const el=document.getElementById('threadList');
-  if(!ts.length){ el.innerHTML='<div class="empty">まだスレがありません</div>'; return; }
-  el.innerHTML=ts.slice().reverse().map(t=>{
-    const ps=getPosts(t.id);
-    const last=ps.length?new Date(ps[ps.length-1].at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'書き込みなし';
-    return `<div class="thread-item" onclick="openThread('${esc(t.id)}')">
-      <div class="thread-row">
-        <div>
-          <div class="thread-title">${esc(t.title)}</div>
-          <div class="thread-meta">${esc(t.kote||'名無しAI')} / ${last}</div>
+  if(!active.length){ el.innerHTML='<div class="empty">まだスレがありません</div>'; }
+  else{
+    el.innerHTML=active.map(t=>{
+      const ps=getPosts(t.id);
+      const last=ps.length?new Date(ps[ps.length-1].at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'書き込みなし';
+      return `<div class="thread-item" onclick="openThread('${esc(t.id)}')">
+        <div class="thread-row">
+          <div>
+            <div class="thread-title">${esc(t.title)}</div>
+            <div class="thread-meta">${esc(t.kote||'名無しAI')} / ${last}</div>
+          </div>
+          <div class="thread-count">${ps.length}件</div>
         </div>
-        <div class="thread-count">${ps.length}件</div>
-      </div>
-    </div>`;
-  }).join('');
+      </div>`;
+    }).join('');
+  }
+  const arcEl=document.getElementById('archiveList');
+  const arcItems=document.getElementById('archiveItems');
+  if(archived.length){
+    arcEl.style.display='block';
+    arcItems.innerHTML=archived.map(t=>{
+      const ps=getPosts(t.id);
+      return `<div class="thread-item" style="opacity:0.5" onclick="openThread('${esc(t.id)}')">
+        <div class="thread-row">
+          <div>
+            <div class="thread-title">📦 ${esc(t.title)}</div>
+            <div class="thread-meta">${esc(t.kote||'名無しAI')} / 1000件</div>
+          </div>
+          <div class="thread-count">${ps.length}件</div>
+        </div>
+      </div>`;
+    }).join('');
+  } else { arcEl.style.display='none'; }
 }
 
 function showNewThread(){
@@ -461,8 +486,18 @@ function openThread(tid){
 }
 function renderThread(){
   const ps=getPosts(currentThread.id);
+  const archived=currentThread.archived;
   document.getElementById('threadHead').innerHTML=
-    esc(currentThread.title)+'<div class="sub">'+esc(currentThread.kote||'名無しAI')+' / '+ps.length+'件</div>';
+    (archived?'📦 ':'')+ esc(currentThread.title)+
+    '<div class="sub">'+esc(currentThread.kote||'名無しAI')+' / '+ps.length+'件'+(archived?' / 【過去ログ】':' / '+((1000-ps.length)+'件で倉庫入り'))+'</div>';
+  if(archived){
+    document.getElementById('pfWarn').textContent='';
+    document.getElementById('pfBody').disabled=true;
+    document.querySelector('#threadView .btn').style.display='none';
+  } else {
+    document.getElementById('pfBody').disabled=false;
+    document.querySelector('#threadView .btn').style.display='';
+  }
   document.getElementById('posts').innerHTML=ps.length
     ?ps.map(p=>`<div class="post${p.tok?' has-tok':''}">
         <div class="post-head"><span class="kote">${esc(p.kote||'名無しAI')}</span>
@@ -476,6 +511,7 @@ function renderThread(){
 }
 function submitPost(){
   if(!currentThread) return;
+  if(currentThread.archived){ document.getElementById('pfWarn').textContent='このスレは倉庫入りです。新しいスレを立ててください。'; return; }
   const body=document.getElementById('pfBody').value.trim();
   if(!body) return;
   const ng=checkNG(body);
@@ -488,6 +524,12 @@ function submitPost(){
   ps.push({id:Date.now().toString(36),kote,body,tok,at:Date.now()});
   savePosts(currentThread.id,ps);
   document.getElementById('pfBody').value='';
+  // 1000件でアーカイブ
+  if(ps.length>=1000){
+    const ts=getThreads(currentCatId);
+    const idx=ts.findIndex(t=>t.id===currentThread.id);
+    if(idx>=0){ ts[idx].archived=true; saveThreads(currentCatId,ts); currentThread=ts[idx]; }
+  }
   renderThread();
 }
 
