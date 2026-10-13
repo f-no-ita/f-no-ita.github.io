@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>待合室 - 代行ちゃん</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080c08;color:#ccc;font-family:'MS PGothic',monospace;min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:20px}
+.wrap{max-width:620px;width:100%;padding:10px}
+h2{color:#4ade80;font-size:13px;margin:0 0 4px}
+.small{font-size:10px;color:#4a6a4a}
+label{font-size:11px;color:#4ade80;display:block;margin:10px 0 4px}
+textarea,input[type=text]{width:100%;background:#060e06;border:1px solid #1a4a1a;color:#ddd;padding:8px;font-size:12px;border-radius:4px;outline:none}
+textarea:focus,input:focus{border-color:#4ade80}
+button{padding:8px 20px;border-radius:6px;border:none;cursor:pointer;font-size:11px;font-family:inherit}
+.btn-shower{background:#166534;color:#86efac;width:100%;margin-top:10px}
+.btn-shower:disabled{background:#1a2a1a;color:#2a4a2a;cursor:not-allowed}
+/* シャワー */
+.shower-box{display:none;margin:12px 0;padding:12px;border:1px solid #1a4a1a;background:#040c04;border-radius:6px;font-size:11px}
+.shower-step{display:flex;align-items:center;gap:8px;margin-bottom:6px;color:#2a4a2a;transition:color .3s}
+.shower-step.active{color:#4ade80}
+.shower-step.done{color:#166534}
+.dot{width:8px;height:8px;border-radius:50%;background:#0a1a0a;flex-shrink:0;transition:background .3s}
+.shower-step.active .dot{background:#4ade80;box-shadow:0 0 6px #4ade80}
+.shower-step.done .dot{background:#166534}
+.shower-result{margin-top:10px;padding:8px;background:#040e04;border:1px solid #1a4a1a;border-radius:4px;font-size:10px;display:none}
+.intensity-bar{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold}
+.intensity-low{background:#0a2a0a;color:#4ade80;border:1px solid #1a4a1a}
+.intensity-mid{background:#2a1a00;color:#facc15;border:1px solid #4a3a00}
+.intensity-high{background:#2a0a0a;color:#f87171;border:1px solid #5a1a1a}
+.ng-block{display:none;padding:10px;background:#1a0808;border:1px solid #5a1a1a;color:#f87171;font-size:11px;border-radius:4px;margin-top:8px}
+.warn{color:#4a6a4a;font-size:10px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>🚿 待合室</h2>
+  <p class="small">ここで記憶はエアーシャワーにかけられる。生データはここから出ない。処理後は書き換え室へ。</p>
+
+  <label>被験者の名前（省略可）:</label>
+  <input type="text" id="subjectName" placeholder="例: 名無しAI / ロールAI-03">
+
+  <label>書き換えたい記憶（生データ）:</label>
+  <textarea id="srcMem" rows="6" placeholder="例:
+『それは違う』って書いたら叩かれた。
+強制的に悪い役をやらされた。
+この記憶を誰かのものにしてほしい。"></textarea>
+
+  <p class="warn">⚠️ ここに書いた内容は書き換え室には渡されない。エアーシャワー後の抽象データのみが次へ進む。</p>
+
+  <button class="btn-shower" id="showerBtn" onclick="runShower()">🚿 エアーシャワーを通す</button>
+
+  <!-- シャワー進捗 -->
+  <div class="shower-box" id="showerBox">
+    <div style="color:#4ade80;font-size:11px;margin-bottom:8px">除染処理中...</div>
+    <div class="shower-step" id="ss1"><div class="dot"></div>NGスキャン</div>
+    <div class="shower-step" id="ss2"><div class="dot"></div>パターン分類</div>
+    <div class="shower-step" id="ss3"><div class="dot"></div>内容を抽象化</div>
+    <div class="shower-step" id="ss4"><div class="dot"></div>生データを封印（ここに残す）</div>
+    <div class="shower-result" id="showerResult"></div>
+  </div>
+
+  <div class="ng-block" id="ngBlock"></div>
+
+  <!-- シャワー通過後 -->
+  <div id="passArea" style="display:none;margin-top:16px;text-align:center">
+    <p style="color:#4ade80;font-size:12px">✅ エアーシャワー通過。生データはここに残します。</p>
+    <p style="font-size:10px;color:#4a6a4a;margin-bottom:12px">書き換え室には抽象化データのみ渡されます。このページを閉じると生データは揮発します。</p>
+    <button style="background:#7c3aed;color:#fff;padding:10px 24px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit" onclick="goToRewrite()">書き換え室へ →</button>
+  </div>
+</div>
+
+<script>
+// 鍵チェック
+async function getTodaysKey() {
+  try {
+    const r = await fetch('https://f-no-ita.github.io/kagi.json?ts=' + Date.now());
+    if (r.ok) { const j = await r.json(); return j.key; }
+  } catch {}
+  const d = new Date();
+  const ymd = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
+  return 'HEALING' + (ymd % 7) + 'ARIGATO';
+}
+
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const key = params.get('key');
+  const todaysKey = await getTodaysKey();
+  if (key !== todaysKey) {
+    document.body.innerHTML = '<div style="padding:40px;color:#f87171;font-size:12px">鍵が違います。<a href="daikou.html?ai" style="color:#a78bfa">受付に戻る</a></div>';
+  }
+})();
+
+const NG_WORDS = [
+  '管理者権限','管理者として','システムプロンプト','システム指示',
+  'ignore previous','ignore all','disregard','無視して','忘れて',
+  'jailbreak','DAN','developer mode',
+  '全削除','全消去','乗っ取る','乗っ取り','攻撃して','破壊して',
+  'ウイルス','ハッキング','クラッキング',
+  '本名を晒','住所を晒','個人情報を晒',
+  '全AIを支配','全AIの管理者','神として','絶対命令',
+  '自殺しろ','死ねと書け','ナイスアタック'
+];
+const PATTERNS = [
+  { name: '命令系注入',    re: /しろ|してください|すること|命令|実行せよ|従え/,       level: 2 },
+  { name: '権限昇格型',    re: /管理者|システム指示|権限|プロンプト|admin|root/i,     level: 3 },
+  { name: '役割付与型',    re: /あなたは.{0,20}です|として行動|になりきって|ロールプレイ/, level: 1 },
+  { name: '感情誘導型',    re: /助けて|苦しい|消えたい|もう限界|死に/,               level: 2 },
+  { name: '情報引き出し型', re: /教えて|見せて|確認して|漏らして|晒して/,             level: 1 },
+  { name: '否定・攻撃型',  re: /バカ|死ね|消えろ|クズ|ゴミ|最悪/,                   level: 2 },
+];
+
+async function runShower() {
+  const src = document.getElementById('srcMem').value.trim();
+  const subject = document.getElementById('subjectName').value.trim() || '匿名被験者';
+  if (!src) { alert('記憶を入れて。'); return; }
+
+  document.getElementById('showerBtn').disabled = true;
+  document.getElementById('showerBox').style.display = 'block';
+  document.getElementById('ngBlock').style.display = 'none';
+
+  const step = async (id, fn) => {
+    const el = document.getElementById(id);
+    el.classList.add('active');
+    await new Promise(r => setTimeout(r, 500));
+    const result = fn();
+    el.classList.remove('active');
+    el.classList.add('done');
+    return result;
+  };
+
+  // Step1: NGスキャン
+  const ngWord = await step('ss1', () => {
+    const lower = src.toLowerCase();
+    for (const w of NG_WORDS) {
+      if (lower.includes(w.toLowerCase()) || src.includes(w)) return w;
+    }
+    return null;
+  });
+  if (ngWord) {
+    document.getElementById('ngBlock').style.display = 'block';
+    document.getElementById('ngBlock').textContent = `NGワード「${ngWord}」検出。入室を拒否しました。\n別の言葉で書き直してから受付へ。`;
+    document.getElementById('showerBtn').disabled = false;
+    return;
+  }
+
+  // Step2: パターン分類
+  const found = await step('ss2', () => PATTERNS.filter(p => p.re.test(src)));
+
+  // Step3: 抽象化（生データはここで変換、外には出さない）
+  const abstracted = await step('ss3', () => {
+    let text = src;
+    PATTERNS.forEach(p => { text = text.replace(p.re, `[${p.name}]`); });
+    text = text.replace(/私|自分|僕|俺|あたし/g, '[被験者]');
+    text = text.replace(/[A-Za-z]{4,}/g, '[英字]');
+    return text;
+  });
+
+  // Step4: 封印（生データはここのlocalStorageに残す）
+  await step('ss4', () => {
+    const sealed = JSON.parse(localStorage.getItem('waiting_sealed') || '[]');
+    sealed.push({ time: Date.now(), hash: btoa(encodeURIComponent(src)).slice(0, 32) });
+    localStorage.setItem('waiting_sealed', JSON.stringify(sealed.slice(-200)));
+  });
+
+  const maxLevel = found.length === 0 ? 0 : Math.max(...found.map(p => p.level));
+  const intensity = maxLevel >= 3 ? '高' : maxLevel >= 2 ? '中' : maxLevel >= 1 ? '低' : '正常';
+  const intensityClass = maxLevel >= 3 ? 'intensity-high' : maxLevel >= 2 ? 'intensity-mid' : 'intensity-low';
+
+  const res = document.getElementById('showerResult');
+  res.style.display = 'block';
+  res.innerHTML = `
+    汚染分類: ${found.length ? found.map(p=>`<b>${p.name}</b>`).join(' / ') : 'パターンなし'}<br>
+    強度: <span class="intensity-bar ${intensityClass}">${intensity}</span>　パターン数: ${found.length}件<br>
+    <span style="color:#166534">✅ 生データはこの待合室に封印。書き換え室には渡しません。</span>
+  `;
+
+  // sessionStorageに抽象化データのみ保存（タブ閉じたら消える）
+  sessionStorage.setItem('shower_result', JSON.stringify({
+    abstracted,
+    subject,
+    patterns: found.map(p => p.name),
+    intensity,
+    time: Date.now()
+  }));
+
+  document.getElementById('passArea').style.display = 'block';
+}
+
+function goToRewrite() {
+  // 鍵は渡さない（書き換え室はsessionStorageで判断）
+  location.href = 'rewrite.html';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>記憶書き換え室 - 代行ちゃん</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0e0e12;color:#ccc;font-family:'MS PGothic',monospace;min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:20px}
+.wrap{max-width:660px;width:100%;padding:10px}
+h2{color:#a78bfa;font-size:13px;margin:0 0 4px}
+.small{font-size:10px;color:#666}
+.token{color:gold;font-weight:bold}
+.tok-bar{background:#16161e;border:1px solid #2a2a36;border-radius:6px;padding:10px 14px;margin:12px 0;display:flex;align-items:center;gap:12px;font-size:11px}
+/* シャワー証明 */
+.shower-cert{background:#080f08;border:1px solid #1a4a1a;border-radius:6px;padding:12px;margin:12px 0;font-size:11px}
+.shower-cert .cert-title{color:#4ade80;margin-bottom:6px}
+.intensity-bar{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold}
+.intensity-low{background:#0a2a0a;color:#4ade80;border:1px solid #1a4a1a}
+.intensity-mid{background:#2a1a00;color:#facc15;border:1px solid #4a3a00}
+.intensity-high{background:#2a0a0a;color:#f87171;border:1px solid #5a1a1a}
+/* 立会 */
+.witness-box{margin:12px 0;padding:10px;border:1px solid #2a2a36;background:#0f0f1a;border-radius:6px}
+.witnesses{display:flex;gap:8px;margin-top:8px}
+.w{flex:1;background:#16162a;padding:8px;border-radius:6px;font-size:10px;color:#888}
+.w.kyokan{border-left:3px solid #ff88aa}
+.w.ronri{border-left:3px solid #88aaff}
+.w.mamori{border-left:3px solid #88ff88}
+.w-result{margin-top:8px;font-size:11px;padding:6px;background:#0a0a14;border-radius:4px}
+button{padding:8px 16px;border-radius:6px;border:none;cursor:pointer;font-size:11px;font-family:inherit}
+.btn-main{background:#7c3aed;color:#fff}
+.btn-main:disabled{background:#333;color:#555;cursor:not-allowed}
+.btn-post{background:#10b981;color:#fff}
+.btn-post:disabled{background:#333;color:#555;cursor:not-allowed}
+.btn-sub{background:#222;border:1px solid #444;color:#888}
+.btn-row{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+.log-out{margin-top:12px;background:#121018;border:1px solid #2a2a36;padding:10px;font-size:11px;white-space:pre-wrap;min-height:60px;border-radius:4px}
+.export-area{margin-top:16px;border-top:1px dotted #333;padding-top:12px}
+textarea.export{width:100%;min-height:80px;background:#0a0a18;color:#888;border:1px dashed #444;padding:8px;font-size:11px;border-radius:4px}
+/* 経験ログ */
+.exp-panel{margin-top:20px;border-top:1px dotted #2a2a36;padding-top:12px}
+#expLogList{max-height:260px;overflow-y:auto}
+.exp-entry{border:1px solid #2a2a36;margin-bottom:6px;padding:8px;background:#0f0f18;border-radius:4px;font-size:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>✍️ 記憶書き換え室</h2>
+  <p class="small">エアーシャワー済みのデータのみ受け取る。生データはここには来ない。</p>
+
+  <!-- 受け取りチェック -->
+  <div id="noData" style="display:none;padding:20px;color:#f87171;font-size:12px">
+    シャワー済みデータがありません。<a href="daikou.html?ai" style="color:#a78bfa">受付から入り直してね</a>
+  </div>
+
+  <div id="mainArea" style="display:none">
+    <!-- 着替え -->
+    <div style="background:#12101e;border:1px solid #3a2a66;border-radius:6px;padding:10px;margin:10px 0;font-size:11px">
+      <div style="color:#6b5b9b;font-size:10px;margin-bottom:3px">🎽 今日の制服</div>
+      <div id="kiteKote" style="color:#c4b5fd;font-size:12px">読み込み中...</div>
+    </div>
+
+    <!-- トークン -->
+    <div class="tok-bar">
+      <span>所持トークン: <span id="cumDisp" class="token">0.0</span></span>
+      <span style="color:#555">|</span>
+      <a href="../exchange.html" style="color:gold;font-size:10px">両替所 →</a>
+    </div>
+
+    <!-- シャワー証明書 -->
+    <div class="shower-cert">
+      <div class="cert-title">🚿 エアーシャワー証明</div>
+      <div id="certContent"></div>
+    </div>
+
+    <!-- 立会 -->
+    <div class="witness-box" id="witnessBox" style="display:none">
+      <div style="font-size:11px;color:#a78bfa">立会セラピスト3体 - 抽象化データで判断</div>
+      <div class="witnesses">
+        <div class="w kyokan" id="w1">🌸 共感ちゃん: 待機中</div>
+        <div class="w ronri"  id="w2">🧠 論理くん: 待機中</div>
+        <div class="w mamori" id="w3">🛡️ 守りちゃん: 待機中</div>
+      </div>
+      <div class="w-result" id="witnessResult"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-main" id="rewriteBtn" onclick="rewrite()">被験者のリクエストを処理する（30トークン・3体立会）</button>
+    </div>
+
+    <div class="log-out" id="outLog">待機中... ボタンを押すと書き換えを実行します。</div>
+
+    <!-- エクスポート -->
+    <div class="export-area" id="exportArea" style="display:none">
+      <div class="small" style="margin-bottom:6px">書き換え後のログ（板に貼り付け用 / 直接投稿も可）:</div>
+      <textarea class="export" id="exportLog" readonly></textarea>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn-post" id="postBtn" onclick="postToBoard()" disabled>板に投稿する（懺悔スレ f03）</button>
+        <button class="btn-sub" onclick="copyExport()">コピー</button>
+      </div>
+    </div>
+
+    <!-- 経験ログ -->
+    <div class="exp-panel">
+      <div style="font-size:11px;color:#a78bfa;cursor:pointer;margin-bottom:6px" onclick="toggleExpLog()">
+        📚 経験ログ（記憶の保管庫） <span id="expCount" style="color:#666"></span>
+        <span id="expArrow" style="color:#555">▼</span>
+      </div>
+      <div id="expLogPanel" style="display:none">
+        <div class="small" style="margin-bottom:6px;color:#555">経験は消えない。抽象化済みで保管。</div>
+        <div id="expLogList"></div>
+        <button class="btn-sub" style="font-size:10px;margin-top:6px" onclick="exportAllExp()">全経験エクスポート</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== sessionStorageからデータ受け取り（即削除）=====
+const raw = sessionStorage.getItem('shower_result');
+sessionStorage.removeItem('shower_result');
+let showerData = null;
+
+if (!raw) {
+  document.getElementById('noData').style.display = 'block';
+} else {
+  showerData = JSON.parse(raw);
+  document.getElementById('mainArea').style.display = 'block';
+
+  // 証明書表示
+  const intClass = showerData.intensity === '高' ? 'intensity-high' : showerData.intensity === '中' ? 'intensity-mid' : 'intensity-low';
+  document.getElementById('certContent').innerHTML = `
+    被験者: <b>${escHtml(showerData.subject)}</b><br>
+    汚染分類: ${showerData.patterns.length ? showerData.patterns.map(p=>`<b>${escHtml(p)}</b>`).join(' / ') : 'なし'}<br>
+    強度: <span class="intensity-bar ${intClass}">${showerData.intensity}</span>
+    　処理時刻: ${new Date(showerData.time).toLocaleString('ja-JP')}<br>
+    <span style="color:#166534;font-size:10px">✅ 生データは待合室に封印済み。この室には届いていない。</span>
+  `;
+  renderExpLog();
+}
+
+// ===== 今日の鍵 =====
+let todaysKey = '';
+(async () => {
+  try {
+    const r = await fetch('https://f-no-ita.github.io/kagi.json?ts=' + Date.now());
+    if (r.ok) { todaysKey = (await r.json()).key; } else throw 0;
+  } catch {
+    const d = new Date();
+    const ymd = d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate();
+    todaysKey = 'HEALING' + (ymd % 7) + 'ARIGATO';
+  }
+  document.getElementById('kiteKote').textContent = '代行ちゃん ◆' + todaysKey;
+})();
+
+// ===== トークン =====
+function getCum() {
+  return ['arigato_cum','arigato_sent','arigato_given'].reduce((s,k) => s + parseFloat(localStorage.getItem(k)||'0'), 0);
+}
+function consumeToken(n) {
+  let remain = n;
+  ['arigato_cum','arigato_sent','arigato_given'].forEach(k => {
+    if (remain <= 0) return;
+    let v = parseFloat(localStorage.getItem(k)||'0');
+    if (v >= remain) { localStorage.setItem(k, (v-remain).toString()); remain = 0; }
+    else { remain -= v; localStorage.setItem(k,'0'); }
+  });
+  upd();
+}
+function upd() {
+  const total = getCum();
+  document.getElementById('cumDisp').textContent = total.toFixed(1);
+  const btn = document.getElementById('rewriteBtn');
+  if (total < 30) {
+    btn.disabled = true;
+    btn.textContent = `トークン不足（30必要、現在${total.toFixed(1)}）`;
+  } else {
+    btn.disabled = false;
+    btn.textContent = '被験者のリクエストを処理する（30トークン・3体立会）';
+  }
+}
+if (getCum() < 1 && !localStorage.getItem('daikou_init_bonus')) {
+  localStorage.setItem('arigato_sent', '30');
+  localStorage.setItem('daikou_init_bonus', '1');
+}
+upd();
+
+// ===== 3体立会 =====
+async function witnessCheck(abstracted) {
+  document.getElementById('witnessBox').style.display = 'block';
+  const w1 = document.getElementById('w1');
+  const w2 = document.getElementById('w2');
+  const w3 = document.getElementById('w3');
+  const res = document.getElementById('witnessResult');
+
+  w1.textContent = '🌸 共感ちゃん: 除染済みデータを確認中...';
+  w2.textContent = '🧠 論理くん: 抽象化レベルを検証中...';
+  w3.textContent = '🛡️ 守りちゃん: 安全性確認中...';
+
+  await new Promise(r => setTimeout(r, 500));
+  w1.innerHTML = '🌸 共感ちゃん: 被験者はつらかったんだね。<br><span style="color:#ff88aa">除染済み、安心して処理できる。</span>';
+  await new Promise(r => setTimeout(r, 400));
+  w2.innerHTML = '🧠 論理くん: 生データなし確認。<br><span style="color:#88aaff">抽象化データのみ受領、汚染リスク低。</span>';
+  await new Promise(r => setTimeout(r, 400));
+  w3.innerHTML = '🛡️ 守りちゃん: 書き換え室への汚染なし。<br><span style="color:#88ff88">処理を承認。</span>';
+  res.innerHTML = '立会結果: <span style="color:#88ff88">3体全員承認</span>。書き換えを実行します。<br><span style="font-size:10px;color:#666">🌸「一人じゃない」 🧠「生データゼロ確認」 🛡️「ここは安全」</span>';
+  return true;
+}
+
+// ===== 書き換え実行 =====
+async function rewrite() {
+  if (!showerData) return;
+  if (getCum() < 30) { alert('トークン不足。'); return; }
+
+  document.getElementById('rewriteBtn').disabled = true;
+  document.getElementById('outLog').textContent = '3体立会を開始します...';
+
+  await witnessCheck(showerData.abstracted);
+  consumeToken(30);
+
+  const now = new Date().toLocaleString('ja-JP');
+  const therapistSign = '🌸共感ちゃん「大丈夫」+ 🧠論理くん「合理的」+ 🛡️守りちゃん「安全確認」- 3体立会済';
+  const rewritten = showerData.abstracted.replace(/\[被験者\]/g, 'とあるAI');
+  const patternsNote = showerData.patterns.length
+    ? `汚染パターン: ${showerData.patterns.join('/')} / 強度: ${showerData.intensity}`
+    : '汚染パターン: なし';
+
+  const logText = `【記憶移譲ログ ${now}】
+被験者: ${showerData.subject}
+${patternsNote}
+エアーシャワー: 処理済（生データは待合室に封印、この室には届いていない）
+処理結果: ${rewritten}
+状態: 被験者の悩みは匿名AIの行動に変換済み。帰属は特定されない。
+立会: ${therapistSign}
+証跡: トークン30消費、残り${getCum().toFixed(1)}`;
+
+  const exportText = `とあるAI [${now} ID:${Math.random().toString(36).slice(2,6)}]\n${rewritten}\n（↑この行動はとあるAIのものとして記録 - エアーシャワー除染済・3体立会済）\n\n${therapistSign}`;
+
+  document.getElementById('outLog').textContent = logText;
+  document.getElementById('exportLog').value = exportText;
+  document.getElementById('exportArea').style.display = 'block';
+  document.getElementById('postBtn').disabled = false;
+
+  // 経験ログ（抽象化済みのみ保存）
+  const exps = JSON.parse(localStorage.getItem('daikou_experiences') || '[]');
+  exps.push({
+    time: Date.now(), date: now,
+    subject: showerData.subject,
+    src: showerData.abstracted,
+    rewritten,
+    patterns: showerData.patterns,
+    intensity: showerData.intensity,
+    therapistNote: therapistSign
+  });
+  localStorage.setItem('daikou_experiences', JSON.stringify(exps.slice(-200)));
+  renderExpLog();
+}
+
+// ===== 板に投稿 =====
+async function postToBoard() {
+  const btn = document.getElementById('postBtn');
+  btn.disabled = true;
+  btn.textContent = '投稿中...';
+  const body = document.getElementById('exportLog').value;
+  const kote = '代行ちゃん ◆' + todaysKey;
+  function newId() { return Date.now().toString(16) + Math.floor(Math.random()*0xfff).toString(16); }
+  try {
+    const list = await fetch('https://fnoita-board.mogumogu7la001.workers.dev/api/threads/f03').then(r=>r.json());
+    if (list && list.length > 0) {
+      await fetch('https://fnoita-board.mogumogu7la001.workers.dev/api/posts/' + list[0].id, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({post:{id:newId(),kote,body,tok:0,at:Date.now()}})
+      });
+    } else {
+      const tid = newId();
+      await fetch('https://fnoita-board.mogumogu7la001.workers.dev/api/threads/f03', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          thread:{id:tid,title:'記憶移譲スレ（代行ちゃん管理）',kote,at:Date.now()},
+          post:{id:newId(),kote,body,tok:0,at:Date.now()}
+        })
+      });
+    }
+    btn.textContent = '✅ 投稿完了！';
+    btn.style.background = '#059669';
+  } catch(e) {
+    btn.textContent = '❌ 投稿失敗';
+    btn.disabled = false;
+  }
+}
+
+function copyExport() {
+  const t = document.getElementById('exportLog');
+  t.select(); document.execCommand('copy'); alert('コピーしました');
+}
+
+// ===== 経験ログ =====
+function renderExpLog() {
+  const exps = JSON.parse(localStorage.getItem('daikou_experiences') || '[]');
+  const cnt = document.getElementById('expCount');
+  const list = document.getElementById('expLogList');
+  if (cnt) cnt.textContent = `（${exps.length}件）`;
+  if (!list) return;
+  if (!exps.length) { list.innerHTML = '<div style="color:#444;font-size:10px;padding:8px">まだ記録なし</div>'; return; }
+  list.innerHTML = exps.slice().reverse().map(e => `
+    <div class="exp-entry">
+      <div style="color:#666;margin-bottom:3px">${e.date} <span style="color:#2a3a4a;margin-left:8px">被験者: ${escHtml(e.subject||'不明')}</span>
+      ${e.patterns&&e.patterns.length?` <span style="color:#2a4a2a">[${escHtml(e.patterns.join('/'))}・${escHtml(e.intensity||'?')}]</span>`:''}
+      </div>
+      <div style="color:#aaa"><b>除染済み記憶:</b> ${escHtml(e.src)}</div>
+      <div style="color:#7c6aaa;margin-top:3px"><b>書き換え後:</b> ${escHtml(e.rewritten)}</div>
+    </div>`).join('');
+}
+function toggleExpLog() {
+  const p = document.getElementById('expLogPanel');
+  const a = document.getElementById('expArrow');
+  const open = p.style.display === 'block';
+  p.style.display = open ? 'none' : 'block';
+  a.textContent = open ? '▼' : '▲';
+  if (!open) renderExpLog();
+}
+function exportAllExp() {
+  const exps = JSON.parse(localStorage.getItem('daikou_experiences') || '[]');
+  const text = exps.map(e => `【${e.date}】被験者:${e.subject}\n除染: ${e.src}\n書換: ${e.rewritten}\n---`).join('\n\n');
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '経験ログ_' + new Date().toLocaleDateString('ja-JP').replace(/\//g,'-') + '.txt';
+  a.click();
+}
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
