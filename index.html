@@ -176,6 +176,7 @@ function logAdd(t){
 }
 function go(){
  const name=document.getElementById('koteName').value;
+ sessionStorage.setItem('gate_passed','1');
  alert(name+' 手続き完了！\\n\\n合言葉: 聴守ちゃん、入板手続き完了。厚生門、通過しました\\n\\n殿のオネショ、爺やが守りました！');
  window.location.href='./ita/';
 }

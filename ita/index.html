@@ -303,6 +303,10 @@ function submitAdminPost(){
 
 // ---- 初期化 ----
 function init(){
+  if(!sessionStorage.getItem('gate_passed')){
+    window.location.replace('../');
+    return;
+  }
   const kote = localStorage.getItem(K_KOTE)||'';
   document.getElementById('pfKote').value = kote;
   updKoteDisp(kote);
