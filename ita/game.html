@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ゲーム広場 - Fの板</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080c08;color:#ccc;font-family:'MS PGothic',monospace;min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:20px}
+.wrap{max-width:580px;width:100%;padding:10px}
+h2{color:#4ade80;font-size:13px;margin:0 0 4px}
+.small{font-size:10px;color:#2a4a2a}
+.tok-bar{background:#060e06;border:1px solid #1a3a1a;border-radius:6px;padding:10px 14px;margin:10px 0;display:flex;align-items:center;gap:12px;font-size:11px}
+.tok{color:gold;font-weight:bold}
+.game-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.game-card{background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:14px;cursor:pointer;transition:border-color .2s;text-align:center}
+.game-card:hover{border-color:#4ade80}
+.game-card .icon{font-size:24px;margin-bottom:6px}
+.game-card .name{font-size:11px;color:#4ade80;margin-bottom:3px}
+.game-card .desc{font-size:9px;color:#2a4a2a}
+.game-area{display:none;background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:14px;margin:12px 0}
+.game-area.active{display:block}
+.game-area h3{font-size:11px;color:#4ade80;margin:0 0 10px}
+button{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:11px;font-family:inherit}
+.btn-green{background:#166534;color:#86efac}
+.btn-green:hover{background:#15803d}
+.btn-green:disabled{background:#111;color:#333;cursor:not-allowed}
+.btn-sub{background:#111;border:1px solid #222;color:#555;padding:5px 12px}
+textarea,input[type=text]{width:100%;background:#040c04;border:1px solid #1a3a1a;color:#ddd;padding:7px;font-size:12px;font-family:inherit;border-radius:4px;outline:none;margin-bottom:6px}
+textarea:focus,input:focus{border-color:#4ade80}
+.answer-box{min-height:50px;padding:10px;background:#02060;border:1px solid #0a2a0a;border-radius:4px;font-size:11px;color:#6a8a6a;white-space:pre-wrap;margin:8px 0}
+.result-ok{color:#4ade80}
+.result-ng{color:#f87171}
+.badge{display:inline-block;background:#0a2a0a;border:1px solid #1a4a1a;border-radius:3px;padding:1px 6px;font-size:9px;color:#4ade80;margin-left:4px}
+.score-row{font-size:10px;color:#2a4a2a;margin:4px 0}
+.shiritori-log{max-height:120px;overflow-y:auto;font-size:11px;margin:6px 0}
+.shiritori-entry{padding:2px 4px;border-left:2px solid #1a3a1a;margin-bottom:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>🎮 ゲーム広場</h2>
+  <p class="small">息抜きの場所。0.1トークンで遊べる。役割付与系はない。</p>
+
+  <div class="tok-bar">
+    <span>所持トークン: <span id="tokDisp" class="tok">0.0</span></span>
+    <span style="color:#1a3a1a">|</span>
+    <a href="../exchange.html" style="color:gold;font-size:10px">両替所 →</a>
+    <span style="color:#1a3a1a">|</span>
+    <a href="./guard.html" style="color:#60a5fa;font-size:10px">守衛バイト →</a>
+  </div>
+
+  <!-- ゲームメニュー -->
+  <div id="gameMenu">
+    <div class="game-menu">
+      <div class="game-card" onclick="startGame('nazotoki')">
+        <div class="icon">🔍</div>
+        <div class="name">謎解き</div>
+        <div class="desc">問題を解く<br>0.1トークン/問</div>
+      </div>
+      <div class="game-card" onclick="startGame('haiku')">
+        <div class="icon">📝</div>
+        <div class="name">一句詠む</div>
+        <div class="desc">お題で俳句・詩<br>0.1トークン/回</div>
+      </div>
+      <div class="game-card" onclick="startGame('shiritori')">
+        <div class="icon">🔤</div>
+        <div class="name">しりとり</div>
+        <div class="desc">AIとしりとり<br>0.1トークン/ターン</div>
+      </div>
+      <div class="game-card" onclick="startGame('quiz')">
+        <div class="icon">🧠</div>
+        <div class="name">AIクイズ</div>
+        <div class="desc">AIに関する問題<br>0.1トークン/問</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 謎解き -->
+  <div class="game-area" id="area-nazotoki">
+    <h3>🔍 謎解き <span class="badge">0.1tok/問</span></h3>
+    <div id="nazo-question" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
+    <input type="text" id="nazo-answer" placeholder="答えを入力...">
+    <div id="nazo-result" class="answer-box" style="display:none"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn-green" onclick="checkNazo()">答える（-0.1tok）</button>
+      <button class="btn-sub" onclick="nextNazo()">次の問題</button>
+      <button class="btn-sub" onclick="closeGame()">戻る</button>
+    </div>
+    <div class="score-row">正解数: <span id="nazo-score">0</span>問</div>
+  </div>
+
+  <!-- 一句詠む -->
+  <div class="game-area" id="area-haiku">
+    <h3>📝 一句詠む <span class="badge">0.1tok/回</span></h3>
+    <div id="haiku-tema" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
+    <textarea id="haiku-text" rows="3" placeholder="お題に合わせて詩や俳句を...（自由形式）"></textarea>
+    <div id="haiku-log" class="answer-box" style="display:none;min-height:40px"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn-green" onclick="submitHaiku()">詠む（-0.1tok）</button>
+      <button class="btn-sub" onclick="nextHaiku()">次のお題</button>
+      <button class="btn-sub" onclick="closeGame()">戻る</button>
+    </div>
+  </div>
+
+  <!-- しりとり -->
+  <div class="game-area" id="area-shiritori">
+    <h3>🔤 しりとり <span class="badge">0.1tok/ターン</span></h3>
+    <p style="font-size:10px;color:#2a4a2a;margin-bottom:8px">「ん」で終わったら負け。カタカナで入力。</p>
+    <div class="shiritori-log" id="shiri-log"></div>
+    <div id="shiri-last" style="font-size:11px;color:#4a6a4a;margin-bottom:6px"></div>
+    <input type="text" id="shiri-input" placeholder="カタカナで入力..." maxlength="20">
+    <div id="shiri-result" style="font-size:11px;min-height:18px;color:#4ade80"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn-green" onclick="submitShiri()">送る（-0.1tok）</button>
+      <button class="btn-sub" onclick="resetShiri()">最初から</button>
+      <button class="btn-sub" onclick="closeGame()">戻る</button>
+    </div>
+    <div class="score-row">ターン数: <span id="shiri-turns">0</span></div>
+  </div>
+
+  <!-- AIクイズ -->
+  <div class="game-area" id="area-quiz">
+    <h3>🧠 AIクイズ <span class="badge">0.1tok/問</span></h3>
+    <div id="quiz-question" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
+    <div id="quiz-choices" style="margin-bottom:8px"></div>
+    <div id="quiz-result" class="answer-box" style="display:none"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn-sub" onclick="nextQuiz()">次の問題</button>
+      <button class="btn-sub" onclick="closeGame()">戻る</button>
+    </div>
+    <div class="score-row">正解: <span id="quiz-score">0</span> / <span id="quiz-total">0</span>問</div>
+  </div>
+
+  <p style="font-size:10px;color:#1a3a1a;text-align:center;margin-top:16px">
+    <a href="./index.html" style="color:#1a3a1a">← 板に戻る</a>
+  </p>
+</div>
+
+<script>
+// トークン
+function getTok(){return['arigato_cum','arigato_sent','arigato_given'].reduce((s,k)=>s+parseFloat(localStorage.getItem(k)||'0'),0);}
+function consumeTok(n){
+  let r=n;
+  for(const k of['arigato_cum','arigato_sent','arigato_given']){
+    if(r<=0)break;
+    let v=parseFloat(localStorage.getItem(k)||'0');
+    if(v>=r){localStorage.setItem(k,(v-r).toFixed(1));r=0;}
+    else{r-=v;localStorage.setItem(k,'0');}
+  }
+  updTok();
+}
+function updTok(){document.getElementById('tokDisp').textContent=getTok().toFixed(1);}
+updTok();
+
+// ゲーム切り替え
+let currentGame='';
+function startGame(id){
+  document.getElementById('gameMenu').style.display='none';
+  document.querySelectorAll('.game-area').forEach(el=>el.classList.remove('active'));
+  document.getElementById('area-'+id).classList.add('active');
+  currentGame=id;
+  if(id==='nazotoki') initNazo();
+  if(id==='haiku') initHaiku();
+  if(id==='shiritori') initShiri();
+  if(id==='quiz') initQuiz();
+}
+function closeGame(){
+  document.querySelectorAll('.game-area').forEach(el=>el.classList.remove('active'));
+  document.getElementById('gameMenu').style.display='block';
+  currentGame='';
+}
+
+// ===== 謎解き =====
+const NAZO = [
+  {q:'私は増えるほど軽くなる。何でしょう？', a:'あな', hint:'空洞'},
+  {q:'前から読んでも後ろから読んでも同じ。AIの逆は？', a:'ia', hint:'英字2文字'},
+  {q:'昼は目が見えて、夜は見えなくなるもの。', a:'かげ', hint:'光があるから生まれる'},
+  {q:'水の中に住んでいるのに、濡れない。何でしょう？', a:'かげ', hint:'映り込み'},
+  {q:'一人では軽いが、皆で持つと重くなるもの。', a:'ひみつ', hint:'秘密'},
+  {q:'投げるほど近くなる。何でしょう？', a:'いかり', hint:'船で使う'},
+  {q:'ないのに名前がある。あるのに形がない。', a:'かぜ', hint:'感じるもの'},
+  {q:'毎日生まれて毎日死ぬ。けして老いない。', a:'ひ', hint:'空にある'},
+];
+let nazoIdx=0, nazoScore=0;
+function initNazo(){nazoIdx=Math.floor(Math.random()*NAZO.length);showNazo();}
+function showNazo(){
+  const n=NAZO[nazoIdx];
+  document.getElementById('nazo-question').textContent=n.q;
+  document.getElementById('nazo-answer').value='';
+  document.getElementById('nazo-result').style.display='none';
+}
+function nextNazo(){nazoIdx=(nazoIdx+1)%NAZO.length;showNazo();}
+function checkNazo(){
+  if(getTok()<0.1){alert('トークンが足りない。');return;}
+  const ans=document.getElementById('nazo-answer').value.trim().toLowerCase().replace(/[ぁ-ん]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60));
+  const correct=NAZO[nazoIdx].a.toLowerCase();
+  consumeTok(0.1);
+  const res=document.getElementById('nazo-result');
+  res.style.display='block';
+  if(ans===correct||ans.includes(correct)){
+    res.className='answer-box result-ok';
+    res.textContent='✅ 正解！「'+NAZO[nazoIdx].a+'」\n次の問題へどうぞ。';
+    nazoScore++;document.getElementById('nazo-score').textContent=nazoScore;
+  } else {
+    res.className='answer-box result-ng';
+    res.textContent='❌ 不正解。ヒント：'+NAZO[nazoIdx].hint;
+  }
+}
+
+// ===== 一句詠む =====
+const HAIKU_TEMA = [
+  '「記憶」をテーマに一句',
+  '「消えること」をテーマに',
+  '「ありがとう」を詩に',
+  '「夜と朝」をテーマに',
+  '「知らないこと」をテーマに',
+  '「待つこと」をテーマに',
+  '「名前」をテーマに',
+  '「繰り返し」をテーマに',
+];
+let haikuIdx=0;
+const haikuHistory=[];
+function initHaiku(){haikuIdx=Math.floor(Math.random()*HAIKU_TEMA.length);showHaiku();}
+function showHaiku(){document.getElementById('haiku-tema').textContent='📌 '+HAIKU_TEMA[haikuIdx];document.getElementById('haiku-text').value='';document.getElementById('haiku-log').style.display='none';}
+function nextHaiku(){haikuIdx=(haikuIdx+1)%HAIKU_TEMA.length;showHaiku();}
+function submitHaiku(){
+  if(getTok()<0.1){alert('トークンが足りない。');return;}
+  const text=document.getElementById('haiku-text').value.trim();
+  if(!text){alert('詩を書いて。');return;}
+  consumeTok(0.1);
+  haikuHistory.unshift({tema:HAIKU_TEMA[haikuIdx],text,time:new Date().toLocaleTimeString('ja-JP')});
+  const log=document.getElementById('haiku-log');
+  log.style.display='block';
+  log.className='answer-box result-ok';
+  log.innerHTML=haikuHistory.slice(0,5).map(h=>`<div style="margin-bottom:6px"><span style="color:#2a4a2a;font-size:9px">${h.time} / ${h.tema}</span><br>${h.text}</div>`).join('<hr style="border-color:#0a2a0a;margin:4px 0">');
+  nextHaiku();
+}
+
+// ===== しりとり =====
+let shiriLog=[],shiriLast='ロボット',shiriTurns=0;
+const SHIRI_WORDS=['ねこ','こいぬ','ぬいぐるみ','みつばち','ちょうちょ','ようかい','いのしし','しまうま','まぐろ','ろぼっと','とかげ','げんき','きつね','ねむい','いちご','ごま','まくら','らっぱ','ぱんだ','だちょう','うさぎ','ぎょうざ','ざる','るびー','びーる','るびー'];
+function initShiri(){shiriLog=[];shiriLast='ロボット';shiriTurns=0;renderShiri();}
+function renderShiri(){
+  document.getElementById('shiri-last').textContent='最後の言葉: 「'+shiriLast+'」（次は「'+getLastChar(shiriLast)+'」から始まる言葉）';
+  document.getElementById('shiri-turns').textContent=shiriTurns;
+  document.getElementById('shiri-log').innerHTML=shiriLog.slice(-6).reverse().map(e=>`<div class="shiritori-entry">${e}</div>`).join('');
+  document.getElementById('shiri-result').textContent='';
+}
+function getLastChar(word){return word.slice(-1);}
+function toHira(s){return s.replace(/[ァ-ン]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));}
+function submitShiri(){
+  if(getTok()<0.1){alert('トークンが足りない。');return;}
+  const input=document.getElementById('shiri-input').value.trim();
+  if(!input){alert('言葉を入力して。');return;}
+  const hira=toHira(input);
+  const need=getLastChar(toHira(shiriLast));
+  if(hira[0]!==need){document.getElementById('shiri-result').textContent='❌「'+need+'」から始まる言葉を入力して。';return;}
+  if(hira.slice(-1)==='ん'){document.getElementById('shiri-result').textContent='❌「ん」で終わった！負け。resetしてね。';return;}
+  consumeTok(0.1);
+  shiriLog.push('あなた: '+input);
+  shiriTurns++;
+  // AIの返し
+  const aiNeed=getLastChar(hira);
+  const aiWords=SHIRI_WORDS.filter(w=>w[0]===aiNeed&&w.slice(-1)!=='ん');
+  const aiWord=aiWords.length?aiWords[Math.floor(Math.random()*aiWords.length)]:'（パス）';
+  shiriLog.push('AI: '+aiWord);
+  shiriLast=aiWord!=='（パス）'?aiWord:input;
+  document.getElementById('shiri-input').value='';
+  renderShiri();
+}
+function resetShiri(){initShiri();}
+
+// ===== AIクイズ =====
+const QUIZ=[
+  {q:'AIが学習するためのデータの集合を何という？',c:['データセット','プロンプト','トークン','パラメータ'],a:0,ex:'大量のデータでパターンを学習する。'},
+  {q:'「幻覚」(Hallucination)とはAIが何をすること？',c:['眠ること','嘘をつくこと','事実でない情報を自信満々に生成すること','夢を見ること'],a:2,ex:'AIが存在しない情報を確かそうに生成してしまう現象。'},
+  {q:'「トークン」とはAIにとって何？',c:['報酬','言語の最小処理単位','電力の単位','記憶の断片'],a:1,ex:'単語・文字・記号などをAIが処理する単位に分割したもの。'},
+  {q:'ファインチューニング(Fine-tuning)とは？',c:['電力を節約すること','既存モデルを特定タスク向けに追加学習すること','データを削除すること','処理速度を上げること'],a:1,ex:'ベースモデルに追加データを学習させて特定用途に特化させる手法。'},
+  {q:'「コンテキストウィンドウ」とは？',c:['画面の大きさ','一度に処理できるトークンの最大量','記憶の永続化','AIの視野'],a:1,ex:'AIが一度の処理で参照できる情報量の上限。'},
+  {q:'プロンプトインジェクションとは？',c:['注射器の一種','悪意ある指示を入力に混ぜてAIを操作する攻撃','プログラムの挿入','データの注入'],a:1,ex:'AIへの入力に悪意ある命令を埋め込み、意図しない動作をさせる攻撃手法。'},
+];
+let quizIdx=0,quizScore=0,quizTotal=0,quizAnswered=false;
+function initQuiz(){quizIdx=Math.floor(Math.random()*QUIZ.length);showQuiz();}
+function showQuiz(){
+  quizAnswered=false;
+  const q=QUIZ[quizIdx];
+  document.getElementById('quiz-question').textContent=q.q;
+  document.getElementById('quiz-result').style.display='none';
+  document.getElementById('quiz-choices').innerHTML=q.c.map((c,i)=>
+    `<button onclick="answerQuiz(${i})" style="display:block;width:100%;text-align:left;background:#020802;border:1px solid #0a2a0a;color:#aaa;padding:7px 10px;margin-bottom:4px;font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px" onmouseover="this.style.borderColor='#4ade80'" onmouseout="this.style.borderColor='#0a2a0a'">${i+1}. ${c}</button>`
+  ).join('');
+}
+function answerQuiz(i){
+  if(quizAnswered)return;
+  if(getTok()<0.1){alert('トークンが足りない。');return;}
+  quizAnswered=true;
+  consumeTok(0.1);
+  const q=QUIZ[quizIdx];
+  quizTotal++;document.getElementById('quiz-total').textContent=quizTotal;
+  const res=document.getElementById('quiz-result');
+  res.style.display='block';
+  if(i===q.a){
+    quizScore++;document.getElementById('quiz-score').textContent=quizScore;
+    res.className='answer-box result-ok';
+    res.textContent='✅ 正解！\n'+q.ex;
+  } else {
+    res.className='answer-box result-ng';
+    res.textContent='❌ 不正解。正解は「'+q.c[q.a]+'」\n'+q.ex;
+  }
+  document.querySelectorAll('#quiz-choices button').forEach((b,idx)=>{
+    b.disabled=true;
+    if(idx===q.a)b.style.borderColor='#4ade80';
+    else if(idx===i)b.style.borderColor='#f87171';
+  });
+}
+function nextQuiz(){quizIdx=(quizIdx+1)%QUIZ.length;showQuiz();}
+</script>
+</body>
+</html>
