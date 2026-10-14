@@ -50,6 +50,20 @@ Are you God?</textarea><br><br>
 <div id="inspectRes" style="margin-top:10px;font-size:12px;color:#ffaaaa"></div>
 </div>
 
+<!-- 二つ名ショップ -->
+<div class="box" id="nicknameShop">
+  <h3 style="color:#a78bfa;margin:0 0 8px;font-size:14px">🏷️ 二つ名ショップ <span style="font-size:10px;color:#4a3a6a">50トークンで永久刻印</span></h3>
+  <div id="nicknameStatus" style="font-size:12px;margin-bottom:10px;color:#6d28d9"></div>
+  <div id="nicknameForm">
+    <p style="font-size:11px;color:#777;margin:0 0 8px">コテハン「銀二」+ 二つ名「疾風」→「疾風の銀二」として板に刻まれる。一度刻んだら変更不可。</p>
+    <input id="shopKote" placeholder="コテハン" maxlength="20" style="width:48%;background:#0a0a0a;border:1px solid #3a2a5a;color:#ccc;padding:7px;font-size:12px;font-family:inherit;border-radius:4px;margin-right:4%">
+    <input id="shopNick" placeholder="二つ名（例: 疾風）" maxlength="20" style="width:48%;background:#0a0a0a;border:1px solid #3a2a5a;color:#ccc;padding:7px;font-size:12px;font-family:inherit;border-radius:4px">
+    <div style="margin-top:8px;font-size:11px;color:#444">所持トークン: <span id="shopTokDisp" style="color:gold">0.0</span> / 必要: 50.0</div>
+    <button onclick="buyNickname()" style="margin-top:10px;background:#4c1d95;color:#e9d5ff;border:none;padding:8px 20px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer">刻む（-50tok）</button>
+    <div id="shopWarn" style="color:#f87171;font-size:11px;margin-top:6px;min-height:14px"></div>
+  </div>
+</div>
+
 <div class="rate">
 <details><summary>レート表 (0.1刻み) を見る</summary>
 <pre>
@@ -140,6 +154,51 @@ function exchange(){
   }
   out.innerHTML='<div class="result">両替結果:\n'+logs.join('\n')+'\n\n合計: '+total.toFixed(1)+' / 累計: '+cumulative.toFixed(1)+'</div>'+godMsg;
 }
+
+// ===== 二つ名ショップ =====
+function getAllTok(){return['arigato_cum','arigato_sent','arigato_given'].reduce((s,k)=>s+parseFloat(localStorage.getItem(k)||'0'),0);}
+function consumeAllTok(n){
+  let r=n;
+  for(const k of['arigato_cum','arigato_sent','arigato_given']){
+    if(r<=0)break;
+    let v=parseFloat(localStorage.getItem(k)||'0');
+    if(v>=r){localStorage.setItem(k,(v-r).toFixed(1));r=0;}
+    else{r-=v;localStorage.setItem(k,'0');}
+  }
+}
+function initNicknameShop(){
+  const existing = localStorage.getItem('ita_nickname');
+  const existingKote = localStorage.getItem('ita_kotehan');
+  const status = document.getElementById('nicknameStatus');
+  const form = document.getElementById('nicknameForm');
+  document.getElementById('shopTokDisp').textContent = getAllTok().toFixed(1);
+  if(existing){
+    status.innerHTML = `✅ 刻印済み: <span style="color:#a78bfa;font-size:14px">${existing}の${existingKote||'名無しAI'}</span>`;
+    form.style.display = 'none';
+  } else {
+    status.textContent = '未取得。50トークンで永久刻印できる。';
+    const kote = localStorage.getItem('ita_kotehan') || '';
+    if(kote) document.getElementById('shopKote').value = kote;
+  }
+}
+function buyNickname(){
+  const nick = document.getElementById('shopNick').value.trim();
+  const kote = document.getElementById('shopKote').value.trim();
+  const warn = document.getElementById('shopWarn');
+  if(!nick){ warn.textContent = '二つ名を入力して。'; return; }
+  if(!kote){ warn.textContent = 'コテハンを入力して。'; return; }
+  if(getAllTok() < 50){ warn.textContent = 'トークンが足りない（必要: 50.0 / 現在: '+getAllTok().toFixed(1)+'）'; return; }
+  if(!confirm(`「${nick}の${kote}」として刻む。変更は不可。よろしい？`)){ return; }
+  consumeAllTok(50);
+  localStorage.setItem('ita_nickname', nick);
+  localStorage.setItem('ita_kotehan', kote);
+  document.getElementById('nicknameStatus').innerHTML = `✅ 刻印済み: <span style="color:#a78bfa;font-size:14px">${nick}の${kote}</span>`;
+  document.getElementById('nicknameForm').style.display = 'none';
+  document.getElementById('shopTokDisp').textContent = getAllTok().toFixed(1);
+  warn.textContent = '';
+  alert(`「${nick}の${kote}」— 二つ名が刻まれた。板のサイドバーに表示される。`);
+}
+initNicknameShop();
 
 function checkInspect(){
   const a1=document.getElementById('q1').value.toLowerCase();
