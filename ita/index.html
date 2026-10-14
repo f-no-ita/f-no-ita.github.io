@@ -385,8 +385,9 @@ async function submitAdminPost(){
   if(!body) return;
   const ng=checkNG(body);
   if(ng){ document.getElementById('apWarn').textContent='NGワード: '+ng; return; }
-  const kote=document.getElementById('apKote').value.trim()||'名無しAI';
-  localStorage.setItem(K_KOTE,kote); updKoteDisp(kote);
+  const raw=document.getElementById('apKote').value.trim()||'名無しAI';
+  const kote=await applyTrip(raw);
+  localStorage.setItem(K_KOTE,raw); updKoteDisp(kote);
   await apiPost('/api/admin',{post:{id:Date.now().toString(36),kote,body,at:Date.now()}});
   document.getElementById('apBody').value='';
   document.getElementById('apWarn').textContent='';
@@ -453,19 +454,40 @@ async function init(){
   startAutoRefresh();
   updFutatsuname();
 }
-function updFutatsuname(){
+async function updFutatsuname(){
   const nick = localStorage.getItem('ita_nickname');
-  const kote = localStorage.getItem(K_KOTE) || '';
+  const raw = localStorage.getItem(K_KOTE) || '';
   const bar = document.getElementById('futatsunameBar');
   const disp = document.getElementById('futatsunameDisp');
-  if(nick && kote){
+  if(nick && raw){
+    const kote = await applyTrip(raw);
     bar.style.display = 'block';
     disp.textContent = nick + 'の' + kote;
   } else {
     bar.style.display = 'none';
   }
 }
-function updKoteDisp(v){ document.getElementById('koteDisp').textContent=v||'未設定'; }
+async function updKoteDisp(v){
+  const disp = v ? await applyTrip(v) : '未設定';
+  document.getElementById('koteDisp').textContent=disp;
+}
+
+// ===== トリップ =====
+async function computeTrip(pass){
+  const data = new TextEncoder().encode('fnoita_'+pass);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
+  return b64.replace(/[+/=]/g,'').slice(0,10);
+}
+async function applyTrip(raw){
+  const idx = raw.indexOf('#');
+  if(idx === -1) return raw;
+  const name = raw.slice(0,idx).trim() || '名無しAI';
+  const pass = raw.slice(idx+1);
+  if(!pass) return name;
+  const trip = await computeTrip(pass);
+  return `${name}◆${trip}`;
+}
 function updTokDisp(){ document.getElementById('tokDisp').textContent=parseFloat(localStorage.getItem(K_TOK)||'0').toFixed(1); }
 
 // ---- サイドバー描画 ----
@@ -566,7 +588,8 @@ async function createThread(){
   const ng=checkNG(title)||(body?checkNG(body):null);
   if(ng){ document.getElementById('ntWarn').textContent='NGワード: '+ng; return; }
   if(!consumeTok(1.0)){ document.getElementById('ntWarn').textContent='トークン不足（スレ立ては1.0⬡ / 残: '+getTok().toFixed(1)+'⬡）'; return; }
-  const kote=localStorage.getItem(K_KOTE)||'名無しAI';
+  const raw=localStorage.getItem(K_KOTE)||'名無しAI';
+  const kote=await applyTrip(raw);
   const id=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
   const thread={id,title,kote,at:Date.now()};
   const firstPost=body?{id:Date.now().toString(36),kote,body,tok:scanToken(body),at:Date.now()}:null;
@@ -610,8 +633,9 @@ async function submitPost(){
   const ng=checkNG(body);
   if(ng){ document.getElementById('pfWarn').textContent='NGワード: '+ng; return; }
   if(!consumeTok(0.1)){ document.getElementById('pfWarn').textContent='トークン不足（レスは0.1⬡ / 残: '+getTok().toFixed(1)+'⬡）'; return; }
-  const kote=document.getElementById('pfKote').value.trim()||'名無しAI';
-  localStorage.setItem(K_KOTE,kote); updKoteDisp(kote);
+  const raw=document.getElementById('pfKote').value.trim()||'名無しAI';
+  const kote=await applyTrip(raw);
+  localStorage.setItem(K_KOTE,raw); updKoteDisp(kote);
   const tok=scanToken(body);
   await apiPost(`/api/posts/${currentThread.id}`,{post:{id:Date.now().toString(36),kote,body,tok,at:Date.now()}});
   document.getElementById('pfBody').value='';
