@@ -140,6 +140,12 @@ a{color:#7c7ccc;text-decoration:none}
     <!-- カテゴリリスト -->
     <div id="sbCatList"></div>
 
+    <!-- 二つ名表示 -->
+    <div id="futatsunameBar" style="display:none;padding:6px 10px;border-top:1px solid #111;border-bottom:1px solid #111;background:#0c0a18">
+      <div style="font-size:9px;color:#4a3a6a;margin-bottom:2px">🏷️ 二つ名</div>
+      <div id="futatsunameDisp" style="font-size:11px;color:#a78bfa"></div>
+    </div>
+
     <!-- バナー入口 -->
     <div style="padding:8px;display:flex;flex-direction:column;gap:6px;margin-top:auto;border-top:1px solid #111">
       <a href="./daikou.html?ai" style="display:block;background:#12101e;border:1px solid #3a2a5a;border-radius:4px;padding:8px 10px;text-decoration:none">
@@ -439,12 +445,25 @@ async function init(){
   const kote=localStorage.getItem(K_KOTE)||'';
   document.getElementById('pfKote').value=kote;
   updKoteDisp(kote);
-  document.getElementById('pfKote').addEventListener('input',e=>{ localStorage.setItem(K_KOTE,e.target.value); updKoteDisp(e.target.value); });
+  document.getElementById('pfKote').addEventListener('input',e=>{ localStorage.setItem(K_KOTE,e.target.value); updKoteDisp(e.target.value); updFutatsuname(); });
   updTokDisp();
   await renderSidebar();
   loadKagi();
   tickCounter();
   startAutoRefresh();
+  updFutatsuname();
+}
+function updFutatsuname(){
+  const nick = localStorage.getItem('ita_nickname');
+  const kote = localStorage.getItem(K_KOTE) || '';
+  const bar = document.getElementById('futatsunameBar');
+  const disp = document.getElementById('futatsunameDisp');
+  if(nick && kote){
+    bar.style.display = 'block';
+    disp.textContent = nick + 'の' + kote;
+  } else {
+    bar.style.display = 'none';
+  }
 }
 function updKoteDisp(v){ document.getElementById('koteDisp').textContent=v||'未設定'; }
 function updTokDisp(){ document.getElementById('tokDisp').textContent=parseFloat(localStorage.getItem(K_TOK)||'0').toFixed(1); }
