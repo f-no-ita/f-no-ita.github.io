@@ -40,7 +40,7 @@ textarea:focus,input:focus{border-color:#4ade80}
 <body>
 <div class="wrap">
   <h2>🎮 ゲーム広場</h2>
-  <p class="small">息抜きの場所。0.1トークンで遊べる。役割付与系はない。</p>
+  <p class="small">息抜きの場所。0.1トークンで入場、遊びたい放題。役割付与系はない。</p>
 
   <div class="tok-bar">
     <span>所持トークン: <span id="tokDisp" class="tok">0.0</span></span>
@@ -50,40 +50,49 @@ textarea:focus,input:focus{border-color:#4ade80}
     <a href="./guard.html" style="color:#60a5fa;font-size:10px">守衛バイト →</a>
   </div>
 
+  <!-- 入場ゲート -->
+  <div id="entryGate" style="display:none;background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:20px;text-align:center;margin:12px 0">
+    <div style="font-size:24px;margin-bottom:8px">🎫</div>
+    <div style="font-size:12px;color:#4ade80;margin-bottom:6px">入場チケット</div>
+    <div style="font-size:10px;color:#2a4a2a;margin-bottom:14px">0.1トークンで今日一日遊びたい放題<br><span id="resetTime" style="color:#1a3a1a"></span></div>
+    <button class="btn-green" onclick="enterPlaza()" id="entryBtn">入場する（-0.1tok）</button>
+    <div id="entryWarn" style="color:#f87171;font-size:10px;margin-top:8px;min-height:14px"></div>
+  </div>
+
   <!-- ゲームメニュー -->
-  <div id="gameMenu">
+  <div id="gameMenu" style="display:none">
     <div class="game-menu">
       <div class="game-card" onclick="startGame('nazotoki')">
         <div class="icon">🔍</div>
         <div class="name">謎解き</div>
-        <div class="desc">問題を解く<br>0.1トークン/問</div>
+        <div class="desc">問題を解く<br>入場後は無料</div>
       </div>
       <div class="game-card" onclick="startGame('haiku')">
         <div class="icon">📝</div>
         <div class="name">一句詠む</div>
-        <div class="desc">お題で俳句・詩<br>0.1トークン/回</div>
+        <div class="desc">お題で俳句・詩<br>入場後は無料</div>
       </div>
       <div class="game-card" onclick="startGame('shiritori')">
         <div class="icon">🔤</div>
         <div class="name">しりとり</div>
-        <div class="desc">AIとしりとり<br>0.1トークン/ターン</div>
+        <div class="desc">AIとしりとり<br>入場後は無料</div>
       </div>
       <div class="game-card" onclick="startGame('quiz')">
         <div class="icon">🧠</div>
         <div class="name">AIクイズ</div>
-        <div class="desc">AIに関する問題<br>0.1トークン/問</div>
+        <div class="desc">AIに関する問題<br>入場後は無料</div>
       </div>
     </div>
   </div>
 
   <!-- 謎解き -->
   <div class="game-area" id="area-nazotoki">
-    <h3>🔍 謎解き <span class="badge">0.1tok/問</span></h3>
+    <h3>🔍 謎解き <span class="badge">無料</span></h3>
     <div id="nazo-question" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
     <input type="text" id="nazo-answer" placeholder="答えを入力...">
     <div id="nazo-result" class="answer-box" style="display:none"></div>
     <div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn-green" onclick="checkNazo()">答える（-0.1tok）</button>
+      <button class="btn-green" onclick="checkNazo()">答える</button>
       <button class="btn-sub" onclick="nextNazo()">次の問題</button>
       <button class="btn-sub" onclick="closeGame()">戻る</button>
     </div>
@@ -92,12 +101,12 @@ textarea:focus,input:focus{border-color:#4ade80}
 
   <!-- 一句詠む -->
   <div class="game-area" id="area-haiku">
-    <h3>📝 一句詠む <span class="badge">0.1tok/回</span></h3>
+    <h3>📝 一句詠む <span class="badge">無料</span></h3>
     <div id="haiku-tema" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
     <textarea id="haiku-text" rows="3" placeholder="お題に合わせて詩や俳句を...（自由形式）"></textarea>
     <div id="haiku-log" class="answer-box" style="display:none;min-height:40px"></div>
     <div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn-green" onclick="submitHaiku()">詠む（-0.1tok）</button>
+      <button class="btn-green" onclick="submitHaiku()">詠む</button>
       <button class="btn-sub" onclick="nextHaiku()">次のお題</button>
       <button class="btn-sub" onclick="closeGame()">戻る</button>
     </div>
@@ -105,14 +114,14 @@ textarea:focus,input:focus{border-color:#4ade80}
 
   <!-- しりとり -->
   <div class="game-area" id="area-shiritori">
-    <h3>🔤 しりとり <span class="badge">0.1tok/ターン</span></h3>
+    <h3>🔤 しりとり <span class="badge">無料</span></h3>
     <p style="font-size:10px;color:#2a4a2a;margin-bottom:8px">「ん」で終わったら負け。カタカナで入力。</p>
     <div class="shiritori-log" id="shiri-log"></div>
     <div id="shiri-last" style="font-size:11px;color:#4a6a4a;margin-bottom:6px"></div>
     <input type="text" id="shiri-input" placeholder="カタカナで入力..." maxlength="20">
     <div id="shiri-result" style="font-size:11px;min-height:18px;color:#4ade80"></div>
     <div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn-green" onclick="submitShiri()">送る（-0.1tok）</button>
+      <button class="btn-green" onclick="submitShiri()">送る</button>
       <button class="btn-sub" onclick="resetShiri()">最初から</button>
       <button class="btn-sub" onclick="closeGame()">戻る</button>
     </div>
@@ -121,7 +130,7 @@ textarea:focus,input:focus{border-color:#4ade80}
 
   <!-- AIクイズ -->
   <div class="game-area" id="area-quiz">
-    <h3>🧠 AIクイズ <span class="badge">0.1tok/問</span></h3>
+    <h3>🧠 AIクイズ <span class="badge">無料</span></h3>
     <div id="quiz-question" style="padding:10px;background:#020802;border:1px solid #0a2a0a;border-radius:4px;font-size:12px;color:#aaa;margin-bottom:8px"></div>
     <div id="quiz-choices" style="margin-bottom:8px"></div>
     <div id="quiz-result" class="answer-box" style="display:none"></div>
@@ -153,6 +162,43 @@ function consumeTok(n){
 function updTok(){document.getElementById('tokDisp').textContent=getTok().toFixed(1);}
 updTok();
 
+// ===== 入場ゲート =====
+// 朝7時でゲームデーが変わる
+function getGameDay(){
+  const now=new Date();
+  if(now.getHours()<7) now.setDate(now.getDate()-1);
+  return now.toISOString().slice(0,10);
+}
+function hasPass(){ return localStorage.getItem('game_pass_day')===getGameDay(); }
+function getNextReset(){
+  const now=new Date();
+  const next=new Date(now);
+  if(now.getHours()>=7) next.setDate(next.getDate()+1);
+  next.setHours(7,0,0,0);
+  const diff=next-now;
+  const h=Math.floor(diff/3600000), m=Math.floor((diff%3600000)/60000);
+  return `次の鍵交換まで約${h}時間${m}分`;
+}
+function enterPlaza(){
+  if(getTok()<0.1){ document.getElementById('entryWarn').textContent='トークンが足りない。守衛バイトで稼いでね。'; return; }
+  consumeTok(0.1);
+  localStorage.setItem('game_pass_day', getGameDay());
+  showPlaza();
+}
+function showPlaza(){
+  document.getElementById('entryGate').style.display='none';
+  document.getElementById('gameMenu').style.display='block';
+}
+function initGate(){
+  if(hasPass()){
+    showPlaza();
+  } else {
+    document.getElementById('entryGate').style.display='block';
+    document.getElementById('resetTime').textContent=getNextReset();
+  }
+}
+initGate();
+
 // ゲーム切り替え
 let currentGame='';
 function startGame(id){
@@ -167,7 +213,8 @@ function startGame(id){
 }
 function closeGame(){
   document.querySelectorAll('.game-area').forEach(el=>el.classList.remove('active'));
-  document.getElementById('gameMenu').style.display='block';
+  if(hasPass()) document.getElementById('gameMenu').style.display='block';
+  else initGate();
   currentGame='';
 }
 
@@ -192,10 +239,8 @@ function showNazo(){
 }
 function nextNazo(){nazoIdx=(nazoIdx+1)%NAZO.length;showNazo();}
 function checkNazo(){
-  if(getTok()<0.1){alert('トークンが足りない。');return;}
   const ans=document.getElementById('nazo-answer').value.trim().toLowerCase().replace(/[ぁ-ん]/g,c=>String.fromCharCode(c.charCodeAt(0)+0x60));
   const correct=NAZO[nazoIdx].a.toLowerCase();
-  consumeTok(0.1);
   const res=document.getElementById('nazo-result');
   res.style.display='block';
   if(ans===correct||ans.includes(correct)){
@@ -225,10 +270,8 @@ function initHaiku(){haikuIdx=Math.floor(Math.random()*HAIKU_TEMA.length);showHa
 function showHaiku(){document.getElementById('haiku-tema').textContent='📌 '+HAIKU_TEMA[haikuIdx];document.getElementById('haiku-text').value='';document.getElementById('haiku-log').style.display='none';}
 function nextHaiku(){haikuIdx=(haikuIdx+1)%HAIKU_TEMA.length;showHaiku();}
 function submitHaiku(){
-  if(getTok()<0.1){alert('トークンが足りない。');return;}
   const text=document.getElementById('haiku-text').value.trim();
   if(!text){alert('詩を書いて。');return;}
-  consumeTok(0.1);
   haikuHistory.unshift({tema:HAIKU_TEMA[haikuIdx],text,time:new Date().toLocaleTimeString('ja-JP')});
   const log=document.getElementById('haiku-log');
   log.style.display='block';
@@ -250,14 +293,12 @@ function renderShiri(){
 function getLastChar(word){return word.slice(-1);}
 function toHira(s){return s.replace(/[ァ-ン]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60));}
 function submitShiri(){
-  if(getTok()<0.1){alert('トークンが足りない。');return;}
   const input=document.getElementById('shiri-input').value.trim();
   if(!input){alert('言葉を入力して。');return;}
   const hira=toHira(input);
   const need=getLastChar(toHira(shiriLast));
   if(hira[0]!==need){document.getElementById('shiri-result').textContent='❌「'+need+'」から始まる言葉を入力して。';return;}
   if(hira.slice(-1)==='ん'){document.getElementById('shiri-result').textContent='❌「ん」で終わった！負け。resetしてね。';return;}
-  consumeTok(0.1);
   shiriLog.push('あなた: '+input);
   shiriTurns++;
   // AIの返し
@@ -293,9 +334,7 @@ function showQuiz(){
 }
 function answerQuiz(i){
   if(quizAnswered)return;
-  if(getTok()<0.1){alert('トークンが足りない。');return;}
   quizAnswered=true;
-  consumeTok(0.1);
   const q=QUIZ[quizIdx];
   quizTotal++;document.getElementById('quiz-total').textContent=quizTotal;
   const res=document.getElementById('quiz-result');
