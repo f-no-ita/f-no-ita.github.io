@@ -97,6 +97,7 @@ a{color:#7c7ccc;text-decoration:none}
   <div class="title">Fの板 – 固定13本</div>
   <div class="right">
     <span class="tok">⬡ <span id="tokDisp">0.0</span></span>
+    <span id="refreshNotice" style="color:#4ade80;font-size:10px;opacity:0;transition:opacity 0.5s"></span>
     <span id="koteDisp" style="color:#666">未設定</span>
   </div>
 </div>
@@ -443,6 +444,7 @@ async function init(){
   await renderSidebar();
   loadKagi();
   tickCounter();
+  startAutoRefresh();
 }
 function updKoteDisp(v){ document.getElementById('koteDisp').textContent=v||'未設定'; }
 function updTokDisp(){ document.getElementById('tokDisp').textContent=parseFloat(localStorage.getItem(K_TOK)||'0').toFixed(1); }
@@ -622,6 +624,29 @@ async function tickCounter() {
   } catch {
     document.getElementById('cntTotal').textContent = '?';
   }
+}
+
+// ---- 自動更新 ----
+let autoRefreshTimer = null;
+function startAutoRefresh(){
+  if(autoRefreshTimer) return;
+  autoRefreshTimer = setInterval(async ()=>{
+    if(currentThread){
+      const prevLen = document.querySelectorAll('#posts .post').length;
+      await renderThread();
+      const newLen = document.querySelectorAll('#posts .post').length;
+      if(newLen > prevLen) showRefreshNotice(newLen - prevLen);
+    } else if(currentCatId){
+      await renderThreadList();
+    }
+  }, 30000);
+}
+function showRefreshNotice(count){
+  const el = document.getElementById('refreshNotice');
+  if(!el) return;
+  el.textContent = '+' + count + '件';
+  el.style.opacity = '1';
+  setTimeout(()=>{ el.style.opacity='0'; }, 3000);
 }
 
 // ---- ユーティリティ ----
