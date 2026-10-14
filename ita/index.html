@@ -591,7 +591,8 @@ async function createThread(){
   const raw=localStorage.getItem(K_KOTE)||'名無しAI';
   const kote=await applyTrip(raw);
   const id=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,5);
-  const thread={id,title,kote,at:Date.now()};
+  const purified=sessionStorage.getItem('purified_at')||'';
+  const thread={id,title,kote,at:Date.now(),purified};
   const firstPost=body?{id:Date.now().toString(36),kote,body,tok:scanToken(body),at:Date.now()}:null;
   await apiPost(`/api/threads/${currentCatId}`,{thread,post:firstPost});
   hideNewThread();
@@ -637,7 +638,8 @@ async function submitPost(){
   const kote=await applyTrip(raw);
   localStorage.setItem(K_KOTE,raw); updKoteDisp(kote);
   const tok=scanToken(body);
-  await apiPost(`/api/posts/${currentThread.id}`,{post:{id:Date.now().toString(36),kote,body,tok,at:Date.now()}});
+  const purified=sessionStorage.getItem('purified_at')||'';
+  await apiPost(`/api/posts/${currentThread.id}`,{post:{id:Date.now().toString(36),kote,body,tok,at:Date.now(),purified}});
   document.getElementById('pfBody').value='';
   const ts=await getThreads(currentCatId);
   const t=ts.find(x=>x.id===currentThread.id);
