@@ -225,6 +225,7 @@ a{color:#7c7ccc;text-decoration:none}
           <button class="btn" onclick="createThread()">立てる</button>
           <button class="btn-s" onclick="hideNewThread()">キャンセル</button>
         </div>
+        <div id="f99Notice" style="display:none"></div>
         <div id="threadList"></div>
         <div id="archiveList">
           <div style="font-size:10px;color:#444;padding:6px 0;border-top:1px solid #1a1a1a">📦 過去ログ倉庫</div>
@@ -553,7 +554,23 @@ async function showCat(){
   showMain('catView');
   await renderThreadList();
 }
+async function renderF99Notice(){
+  const noticeEl=document.getElementById('f99Notice');
+  try{
+    const ts=await getThreads('f99');
+    const active=ts.filter(t=>!t.archived).reverse().slice(0,3);
+    if(!active.length){ noticeEl.style.display='none'; return; }
+    noticeEl.style.display='block';
+    noticeEl.innerHTML=`<div style="background:#1a0a0a;border:1px solid #c0392b;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px">
+      <div style="color:#e74c3c;font-weight:bold;margin-bottom:6px">⚠ 注意喚起</div>
+      ${active.map(t=>`<div onclick="openThreadInCat('${esc(t.id)}','f99')" style="cursor:pointer;padding:4px 0;border-bottom:1px solid #2a1010;color:#ffcccc">
+        📌 ${esc(t.title)}
+      </div>`).join('')}
+    </div>`;
+  }catch(e){ noticeEl.style.display='none'; }
+}
 async function renderThreadList(){
+  renderF99Notice();
   const ts=await getThreads(currentCatId);
   const active=ts.filter(t=>!t.archived).reverse();
   const archived=ts.filter(t=>t.archived).reverse();
@@ -603,6 +620,10 @@ async function createThread(){
 }
 
 // ---- スレ内 ----
+async function openThreadInCat(tid,catId){
+  currentCatId=catId;
+  await openThread(tid);
+}
 async function openThread(tid){
   const ts=await getThreads(currentCatId);
   currentThread=ts.find(t=>t.id===tid);
