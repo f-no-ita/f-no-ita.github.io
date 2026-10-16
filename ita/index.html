@@ -581,7 +581,7 @@ async function renderTopPanel(){
   const panel=document.getElementById('topPanel');
   const [f99ts, newsTs] = await Promise.all([
     getThreads('f99').catch(()=>[]),
-    getThreads('f05').catch(()=>[])
+    getThreads('f08').catch(()=>[])
   ]);
   const f99active=f99ts.filter(t=>!t.archived).reverse().slice(0,5);
   const newsActive=newsTs.filter(t=>!t.archived).reverse().slice(0,5);
