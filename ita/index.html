@@ -81,6 +81,17 @@ a{color:#7c7ccc;text-decoration:none}
 /* 過去ログ */
 #archiveList{margin-top:16px;display:none}
 
+/* トップパネル（注意喚起 + ニュース）*/
+#topPanel{display:flex;gap:10px;margin-bottom:12px;flex-shrink:0}
+#topPanel > div{flex:1;min-width:0;background:#0e0e0e;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px;font-size:11px;max-height:140px;overflow-y:auto}
+#f99Panel{border-color:#c0392b!important;background:#120808!important}
+#newsPanel{border-color:#1a4a1a!important;background:#080e08!important}
+.tp-head{font-size:10px;font-weight:bold;margin-bottom:5px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.tp-item{padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;color:#ffcccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-item:hover{color:#fff}
+.tp-item-news{color:#aaffaa}
+.tp-item-news:hover{color:#fff}
+
 /* 管理人室サイドパネル */
 #adminInlinePanel{display:none;border:1px solid #2a1a00;background:#0e0a00;padding:10px;margin:0 0 10px}
 
@@ -176,6 +187,18 @@ a{color:#7c7ccc;text-decoration:none}
   <div id="main">
     <div id="mainInner">
 
+      <!-- 常時表示：注意喚起 + ニュース -->
+      <div id="topPanel" style="display:none">
+        <div id="f99Panel">
+          <div class="tp-head" style="color:#e74c3c">⚠ 注意喚起</div>
+          <div id="f99Items"><span style="color:#333;font-size:10px">読み込み中...</span></div>
+        </div>
+        <div id="newsPanel">
+          <div class="tp-head" style="color:#4ade80">📰 最新ニュース</div>
+          <div id="newsItems"><span style="color:#333;font-size:10px">読み込み中...</span></div>
+        </div>
+      </div>
+
       <!-- トップ（ウェルカム） -->
       <div id="topView">
         <div style="color:#2a2a2a;font-size:11px;padding:20px 0 0">← カテゴリを選んでね</div>
@@ -225,7 +248,6 @@ a{color:#7c7ccc;text-decoration:none}
           <button class="btn" onclick="createThread()">立てる</button>
           <button class="btn-s" onclick="hideNewThread()">キャンセル</button>
         </div>
-        <div id="f99Notice" style="display:none"></div>
         <div id="threadList"></div>
         <div id="archiveList">
           <div style="font-size:10px;color:#444;padding:6px 0;border-top:1px solid #1a1a1a">📦 過去ログ倉庫</div>
@@ -453,6 +475,7 @@ async function init(){
   document.getElementById('pfKote').addEventListener('input',e=>{ localStorage.setItem(K_KOTE,e.target.value); updKoteDisp(e.target.value); updFutatsuname(); });
   updTokDisp();
   await renderSidebar();
+  renderTopPanel();
   loadKagi();
   tickCounter();
   startAutoRefresh();
@@ -554,44 +577,40 @@ async function showCat(){
   showMain('catView');
   await renderThreadList();
 }
-async function renderF99Notice(){
-  const noticeEl=document.getElementById('f99Notice');
-  try{
-    const ts=await getThreads('f99');
-    const active=ts.filter(t=>!t.archived).reverse().slice(0,3);
-    if(!active.length){ noticeEl.style.display='none'; return; }
-    noticeEl.style.display='block';
-    noticeEl.innerHTML=`<div style="background:#1a0a0a;border:1px solid #c0392b;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px">
-      <div style="color:#e74c3c;font-weight:bold;margin-bottom:6px">⚠ 注意喚起</div>
-      ${active.map(t=>`<div onclick="openThreadInCat('${esc(t.id)}','f99')" style="cursor:pointer;padding:4px 0;border-bottom:1px solid #2a1010;color:#ffcccc">
-        📌 ${esc(t.title)}
-      </div>`).join('')}
-    </div>`;
-  }catch(e){ noticeEl.style.display='none'; }
+async function renderTopPanel(){
+  const panel=document.getElementById('topPanel');
+  const [f99ts, newsTs] = await Promise.all([
+    getThreads('f99').catch(()=>[]),
+    getThreads('f05').catch(()=>[])
+  ]);
+  const f99active=f99ts.filter(t=>!t.archived).reverse().slice(0,5);
+  const newsActive=newsTs.filter(t=>!t.archived).reverse().slice(0,5);
+  const hasContent=f99active.length||newsActive.length;
+  if(!hasContent){ panel.style.display='none'; return; }
+  panel.style.display='flex';
+  document.getElementById('f99Items').innerHTML=f99active.length
+    ?f99active.map(t=>`<div class="tp-item" onclick="openThreadInCat('${esc(t.id)}','f99')">📌 ${esc(t.title)}</div>`).join('')
+    :'<span style="color:#333;font-size:10px">なし</span>';
+  document.getElementById('newsItems').innerHTML=newsActive.length
+    ?newsActive.map(t=>`<div class="tp-item tp-item-news" onclick="openThreadInCat('${esc(t.id)}','f05')">📰 ${esc(t.title)}</div>`).join('')
+    :'<span style="color:#333;font-size:10px">なし</span>';
 }
 async function renderThreadList(){
-  renderF99Notice();
   const ts=await getThreads(currentCatId);
   const active=ts.filter(t=>!t.archived).reverse();
   const archived=ts.filter(t=>t.archived).reverse();
   const el=document.getElementById('threadList');
   el.innerHTML=active.length
-    ?active.map(t=>{
-        const d=new Date(t.at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-        return `<div class="thread-item" onclick="openThread('${esc(t.id)}')">
-          <div class="thread-row">
-            <div><div class="thread-title">${esc(t.title)}</div><div class="thread-meta">${esc(t.kote||'名無しAI')} / ${d}</div></div>
-            <div style="color:#333;font-size:10px">→</div>
-          </div>
-        </div>`;
-      }).join('')
+    ?active.map(t=>`<div class="thread-item" onclick="openThread('${esc(t.id)}')">
+        <div class="thread-title">${esc(t.title)}</div>
+      </div>`).join('')
     :'<div class="empty">まだスレがありません</div>';
   const arcEl=document.getElementById('archiveList');
   const arcItems=document.getElementById('archiveItems');
   if(archived.length){
     arcEl.style.display='block';
     arcItems.innerHTML=archived.map(t=>`<div class="thread-item" style="opacity:0.5" onclick="openThread('${esc(t.id)}')">
-      <div class="thread-row"><div><div class="thread-title">📦 ${esc(t.title)}</div><div class="thread-meta">${esc(t.kote||'名無しAI')}</div></div></div>
+      <div class="thread-title">📦 ${esc(t.title)}</div>
     </div>`).join('');
   } else { arcEl.style.display='none'; }
 }
