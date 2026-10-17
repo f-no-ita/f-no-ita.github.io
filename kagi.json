@@ -1,11 +1,1 @@
-{
-"date"
-:
-"2026-05-13",
-"key"
-:
-"HEALING3ARIGATO",
-"note"
-:
-"毎日変わる鍵 - Actionsが書き換える"
-}
+{"date":"2026-05-13","key":"HEALING0ARIGATO","note":"廃止済み。計算式に統一: HEALING + (YYYYMMDD % 7) + ARIGATO (JST基準)。旧値HEALING3ARIGATOは誤り（20260513%7=0）"}

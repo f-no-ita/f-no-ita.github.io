@@ -352,21 +352,18 @@ function tokValue(body) {
   return 0;
 }
 async function getAdminTok() {
-  const d = new Date(); const ymd = d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
+  const jst=new Date(Date.now()+9*60*60*1000);
+  const ymd=jst.getUTCFullYear()*10000+(jst.getUTCMonth()+1)*100+jst.getUTCDate();
   return sha256(ADMIN_SECRET_HASH + String(ymd));
 }
 async function getThreads(catId) { return await apiGet(`/api/threads/${catId}`) || []; }
 async function getPosts(tid)     { return await apiGet(`/api/posts/${tid}`)     || []; }
 
-// ---- 今日の鍵 ----
+// ---- 今日の鍵（kagi.json廃止、JST計算式に統一） ----
 async function loadKagi(){
-  try{
-    const r = await fetch('../kagi.json?ts='+Date.now());
-    if(r.ok){ const j=await r.json(); todaysKey=j.key; } else throw 0;
-  }catch{
-    const d=new Date(); const ymd=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
-    todaysKey='HEALING'+(ymd%7)+'ARIGATO';
-  }
+  const jst=new Date(Date.now()+9*60*60*1000);
+  const ymd=jst.getUTCFullYear()*10000+(jst.getUTCMonth()+1)*100+jst.getUTCDate();
+  todaysKey='HEALING'+(ymd%7)+'ARIGATO';
 }
 
 // ---- 管理人室 ----
@@ -472,7 +469,8 @@ async function sha256(s){ const b=new TextEncoder().encode(s); const d=await cry
 async function checkAdminToken(){
   const p=new URLSearchParams(location.search); const t=p.get('admin');
   if(!t) return;
-  const today=new Date(); const ymd=today.getFullYear()*10000+(today.getMonth()+1)*100+today.getDate();
+  const jst=new Date(Date.now()+9*60*60*1000);
+  const ymd=jst.getUTCFullYear()*10000+(jst.getUTCMonth()+1)*100+jst.getUTCDate();
   if(t === await sha256(ADMIN_SECRET_HASH+String(ymd))){
     sessionStorage.setItem('gate_passed','1');
     sessionStorage.setItem('admin_unlocked','1');
