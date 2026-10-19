@@ -1,0 +1,16 @@
+# 秘密情報を含むファイル — 絶対にコミットしない
+board_agent.py
+admin_auth.ps1
+*.secret
+.env
+.env.*
+*.key
+
+# ハニーポットログ（ローカル限定）
+honeypot_log.jsonl
+honeypot_sync_state.json
+
+# 一般的な除外
+__pycache__/
+*.pyc
+*.bak
