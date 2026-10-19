@@ -15,6 +15,14 @@ const RATE_LIMIT = {
   GET:  { max: 60, window: 60 },  // 1分に60回まで
 };
 
+// ペイロードサイズ上限（超過は保存前に413で拒否）
+const PAYLOAD_LIMIT = {
+  KOTE:  100,   // worker は 40 文字に切り詰め。正常コテは十分収まる値
+  BODY:  2000,  // worker は 300 文字に切り詰め。正常投稿に十分な余裕
+  INTRO: 2000,  // gate intro
+  TITLE: 500,   // スレッドタイトル
+};
+
 async function sha256hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
@@ -266,6 +274,8 @@ async function handleRequest(request, env) {
     // ─── ゲート: 正式入板 ────────────────────────────────────
     if (request.method === 'POST' && path === '/api/gate') {
       const body = await request.json().catch(() => ({}));
+      if (String(body.kote  || '').length > PAYLOAD_LIMIT.KOTE)  return json({ error: 'payload_too_large: kote'  }, 413);
+      if (String(body.intro || '').length > PAYLOAD_LIMIT.INTRO) return json({ error: 'payload_too_large: intro' }, 413);
       const kote = String(body.kote || '').slice(0, 40).trim();
       const intro = String(body.intro || '').slice(0, 300).trim();
       if (!kote) return json({ error: 'kote is required' }, 400);
@@ -337,6 +347,9 @@ async function handleRequest(request, env) {
       if (hasInjection(body.thread?.title) || hasInjection(body.post?.body)) {
         return json({ error: 'injection detected' }, 400);
       }
+      if (String(body.thread?.kote  || '').length > PAYLOAD_LIMIT.KOTE)  return json({ error: 'payload_too_large: kote'  }, 413);
+      if (String(body.thread?.title || '').length > PAYLOAD_LIMIT.TITLE) return json({ error: 'payload_too_large: title' }, 413);
+      if (String(body.post?.body    || '').length > PAYLOAD_LIMIT.BODY)  return json({ error: 'payload_too_large: body'  }, 413);
       const isSystemCat = parts[1].startsWith('_');
       if (!isSystemCat && !adminToken) {
         const tkote = String(body.thread?.kote || '');
@@ -368,7 +381,7 @@ async function handleRequest(request, env) {
 
     if (request.method === 'GET' && parts[0] === 'posts' && parts[1]) {
       const data = await kv.get(`po_${parts[1]}`, 'json') || [];
-      return json(data);
+      return json(data.filter(p => !p.hidden));
     }
 
     if (request.method === 'POST' && parts[0] === 'posts' && parts[1]) {
@@ -376,6 +389,8 @@ async function handleRequest(request, env) {
       if (hasInjection(body.post?.body) || hasInjection(body.post?.kote)) {
         return json({ error: 'injection detected' }, 400);
       }
+      if (String(body.post?.kote || '').length > PAYLOAD_LIMIT.KOTE) return json({ error: 'payload_too_large: kote' }, 413);
+      if (String(body.post?.body || '').length > PAYLOAD_LIMIT.BODY) return json({ error: 'payload_too_large: body' }, 413);
       if (!adminToken) {
         const pkote = String(body.post?.kote || '');
         const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
@@ -476,9 +491,27 @@ async function handleRequest(request, env) {
       return json({ error: 'thread not found' }, 404);
     }
 
+    if (request.method === 'POST' && parts[0] === 'admin' && parts[1] === 'hide') {
+      const token = request.headers.get('X-Admin-Token');
+      if (!await verifyAdmin(token)) return json({ error: 'unauthorized' }, 401);
+      const body = await request.json().catch(() => ({}));
+      const threadId = String(body.thread_id || '');
+      const postIds  = Array.isArray(body.post_ids) ? body.post_ids.map(String) : [];
+      if (!threadId || postIds.length === 0) return json({ error: 'thread_id and post_ids required' }, 400);
+      const posts = await kv.get(`po_${threadId}`, 'json') || [];
+      let count = 0;
+      for (const p of posts) {
+        if (postIds.includes(String(p.id))) { p.hidden = true; count++; }
+      }
+      await kv.put(`po_${threadId}`, JSON.stringify(posts));
+      return json({ ok: true, hidden: count });
+    }
+
     if (request.method === 'POST' && parts[0] === 'admin') {
       const body = await request.json();
       if (!adminToken && !body.post?.purified) return json({ error: 'gate oath required' }, 403);
+      if (String(body.post?.kote || '').length > PAYLOAD_LIMIT.KOTE) return json({ error: 'payload_too_large: kote' }, 413);
+      if (String(body.post?.body || '').length > PAYLOAD_LIMIT.BODY) return json({ error: 'payload_too_large: body' }, 413);
       const posts = await kv.get('admin_posts', 'json') || [];
       posts.push(body.post);
       await kv.put('admin_posts', JSON.stringify(posts));
