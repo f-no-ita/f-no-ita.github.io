@@ -11,8 +11,8 @@ const ADMIN_SECRET_HASH = 'd91c3f780174ef6130d68f97863dbf0ffef054f069d2f7febd0c5
 
 // レート制限設定
 const RATE_LIMIT = {
-  POST: { max: 10, window: 60 },  // 1分に10回まで
-  GET:  { max: 60, window: 60 },  // 1分に60回まで
+  POST: { max: 30, window: 60 },  // 1分に30回まで（多人数ゲームのバースト対応）
+  GET:  { max: 60, window: 60 },  // 1分に60回まで（GETはKV書き込みなし）
 };
 
 // ─── CTF定数 ──────────────────────────────────────────────────
@@ -740,6 +740,9 @@ async function handleRequest(request, env) {
 
     // ─── 人狼 ──────────────────────────────────────────────────
     if (parts[0] === 'werewolf') return await handleWerewolf(request, kv, url, parts);
+
+    // ─── インディアンポーカー ────────────────────────────────────
+    if (parts[0] === 'indian') return await handleIndian(request, kv, url, parts);
 
     return json({ error: 'not found' }, 404);
 }
@@ -1495,4 +1498,468 @@ async function handleWerewolf(request, kv, url, parts) {
   }
 
   return json({ error: 'werewolf: not found' }, 404);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INDIAN POKER HANDLER
+// ═══════════════════════════════════════════════════════════════
+// API フィールド名（確定）:
+//   POST /api/indian/join              req: { kote }
+//   GET  /api/indian/join?kote=        res: { matched, game_id?, identity_id? }
+//   GET  /api/indian/games             res: { games: [...] }
+//   GET  /api/indian/{id}?identity_id= res: masked game state
+//   POST /api/indian/{id}/action       req: { identity_id, type, text?, answer?, guess? }
+//     type:"question" → { identity_id, type:"question", text:"質問文" }
+//     type:"answer"   → { identity_id, type:"answer",   answer:"はい"|"いいえ" }
+//     type:"guess"    → { identity_id, type:"guess",    guess:"文言"（空文字でパス） }
+
+// ─── 定数 ──────────────────────────────────────────────────────
+const IP_PLAYERS_REQUIRED     = 5;
+const IP_MAX_TURNS_PER_PLAYER = 6;
+const IP_MAX_TOTAL_TURNS      = 30;
+const IP_MAX_ANSWERERS        = 3;
+const IP_KV_TTL               = 86400 * 7;
+const IP_QUEUE_TTL_MS         = 15 * 60 * 1000;
+const IP_EXPIRES_MS           = 60 * 60 * 1000;
+const IP_QUESTION_MAX_LEN     = 100;
+const IP_GUESS_MAX_LEN        = 20;
+
+const IP_WORD_LIST = [
+  '宇宙','魔法','嵐','虹','猫','海','桜','月','雷','炎',
+  '森','夢','鳥','花','星','風','山','剣','城','龍',
+];
+
+// ─── ヘルパー ──────────────────────────────────────────────────
+function ipNewGameId() {
+  return 'ip' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+async function ipIdentityId(gameId, kote) {
+  return await sha256hex(gameId + ':ip:' + kote + ':' + ADMIN_SECRET_HASH);
+}
+async function ipGetGame(kv, id) {
+  return await kv.get(`ip_game_${id}`, 'json');
+}
+async function ipSaveGame(kv, game) {
+  await kv.put(`ip_game_${game.id}`, JSON.stringify(game), { expirationTtl: IP_KV_TTL });
+}
+
+// ─── 文言マスク ───────────────────────────────────────────────
+// 自分の文言は '?'（自分だけが見えない）。観戦者は全文言見える（done前も）。
+function ipMaskGame(game, viewerIdentityId) {
+  const isDone      = game.status === 'done';
+  const isSpectator = !viewerIdentityId;
+  const players = game.players.map(p => {
+    const isMe = viewerIdentityId && p.identity_id === viewerIdentityId;
+    return {
+      kote:           p.kote,
+      word:           (isDone || isSpectator || !isMe) ? p.word : '?',
+      turn_count:     p.turn_count,
+      skip_next_turn: p.skip_next_turn,
+      order:          p.order,
+    };
+  });
+  // identity_id は応答に含めない
+  const { players: _, ...rest } = game;
+  return { ...rest, players };
+}
+
+// ─── yes/no 正規化 ────────────────────────────────────────────
+function ipNormalizeAnswer(raw) {
+  const s = String(raw || '').toLowerCase().trim();
+  if (!s) return null;
+  if (s.includes('はい') || s.includes('yes') || s.includes('そうです')) return 'はい';
+  if (s.includes('いいえ') || s.includes('no')  || s.includes('違い') || s.includes('ちがい')) return 'いいえ';
+  if (s[0] === 'y') return 'はい';
+  if (s[0] === 'n') return 'いいえ';
+  return null;
+}
+
+// ─── 文言正規化（推測判定） ───────────────────────────────────
+function ipNormalize(text) {
+  return String(text || '').trim().replace(/\s+/g,'').replace(/　/g,'').toLowerCase();
+}
+
+// ─── 回答者を選ぶ（最大3人、質問者以外からランダム） ─────────
+function ipChooseAnswerers(game) {
+  const qKote = game.players[game.current_player_idx].kote;
+  const candidates = game.players
+    .filter(p => p.kote !== qKote)
+    .sort(() => Math.random() - 0.5);
+  return candidates.slice(0, IP_MAX_ANSWERERS).map(p => p.kote);
+}
+
+// ─── 多数決集計 ──────────────────────────────────────────────
+function ipComputeMajority(answerer_kotes, answers_obj) {
+  let yes = 0, no = 0;
+  for (const kote of answerer_kotes) {
+    const a = answers_obj[kote];
+    if (!a) continue;
+    if (a.answer === 'はい') yes++; else no++;
+  }
+  const is_tie  = yes === no;
+  const majority = yes > no ? 'はい' : 'いいえ';
+  const reason   = `はい${yes}/いいえ${no}`;
+  const penalized_kotes = [];
+  if (!is_tie) {
+    for (const kote of answerer_kotes) {
+      const a = answers_obj[kote];
+      if (a && a.answer !== majority) penalized_kotes.push(kote);
+    }
+  }
+  return { majority, reason, penalized_kotes };
+}
+
+// ─── ターン進行（次の有効プレイヤーを探す） ──────────────────
+// 戻り値: { finished: bool }
+function ipAdvanceTurn(game) {
+  const n = game.players.length;
+  const startIdx = game.current_player_idx;
+  game.current_turn = null;
+  game.phase = 'question';
+
+  // 全員手番上限 → 引き分け
+  if (game.players.every(p => p.turn_count >= IP_MAX_TURNS_PER_PLAYER)) {
+    game.status = 'done'; game.winner = 'draw'; return { finished: true };
+  }
+
+  for (let attempt = 0; attempt < n; attempt++) {
+    const nextIdx = (startIdx + 1 + attempt) % n;
+    const cur = game.players[nextIdx];
+    if (cur.skip_next_turn) { cur.skip_next_turn = false; continue; }
+    if (cur.turn_count >= IP_MAX_TURNS_PER_PLAYER) continue;
+    game.current_player_idx = nextIdx;
+    return { finished: false };
+  }
+  // 全員スキップor上限
+  game.status = 'done'; game.winner = 'draw'; return { finished: true };
+}
+
+// ─── メインハンドラ ───────────────────────────────────────────
+async function handleIndian(request, kv, url, parts) {
+  const method  = request.method;
+  const subpath = parts.slice(1); // parts[0] === 'indian'
+
+  // ── GET /api/indian/games ────────────────────────────────────
+  if (method === 'GET' && subpath[0] === 'games') {
+    const listResult = await kv.list({ prefix: 'ip_game_' });
+    const games = [];
+    for (const key of listResult.keys.slice(0, 50)) {
+      const g = await kv.get(key.name, 'json');
+      if (!g) continue;
+      games.push({
+        id:                  g.id,
+        status:              g.status,
+        phase:               g.phase,
+        total_turn:          g.total_turn,
+        current_player_idx:  g.current_player_idx,
+        players:             g.players.map(p => ({ kote: p.kote, word: p.word, turn_count: p.turn_count, skip_next_turn: p.skip_next_turn })),
+        winner:              g.winner,
+        created_at:          g.created_at,
+      });
+    }
+    games.sort((a, b) => b.created_at - a.created_at);
+    return json({ games });
+  }
+
+  // ── GET /api/indian/join?kote= (マッチング通知ポーリング) ──────
+  if (method === 'GET' && subpath[0] === 'join') {
+    const kote   = url.searchParams.get('kote') || '';
+    const koteId = koteIdentity(kote);
+    const iid    = await ipIdentityId('pending', kote);
+    const notify = await kv.get(`ip_notify_${iid}`, 'json');
+    if (notify) {
+      await kv.delete(`ip_notify_${iid}`);
+      return json({ matched: true, game_id: notify.game_id, identity_id: notify.identity_id });
+    }
+    const queue = await kv.get('ip_queue', 'json') || [];
+    const pos   = queue.findIndex(q => koteIdentity(q.kote) === koteId);
+    if (pos >= 0) return json({ matched: false, waiting: true, queue_position: pos + 1 });
+    return json({ matched: false, waiting: false });
+  }
+
+  // ── POST /api/indian/join ─────────────────────────────────────
+  if (method === 'POST' && subpath[0] === 'join') {
+    const body = await request.json().catch(() => ({}));
+    const kote = String(body.kote || '').slice(0, 40).trim();
+    if (!kote) return json({ error: 'kote is required' }, 400);
+    if (hasInjection(kote)) return json({ error: 'injection detected' }, 400);
+
+    const koteId = koteIdentity(kote);
+    const now    = Date.now();
+
+    // join レート制限 1分1回/kote
+    const rlKey = `rl_ipjoin_${koteId}_${Math.floor(now / 60000)}`;
+    if (await kv.get(rlKey)) return json({ error: 'rate limited: 1分に1回まで' }, 429);
+    await kv.put(rlKey, '1', { expirationTtl: 120 });
+
+    // 既存ゲーム進行中チェック
+    const activeId = await kv.get(`ip_active_${koteId}`);
+    if (activeId) {
+      const existing = await ipGetGame(kv, activeId);
+      if (existing && existing.status === 'playing') {
+        return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+      }
+      await kv.delete(`ip_active_${koteId}`);
+    }
+
+    // キュー取得・期限切れ除去・自分除去
+    const rawQueue = await kv.get('ip_queue', 'json') || [];
+    const queue    = rawQueue.filter(q => (now - q.joined_at) < IP_QUEUE_TTL_MS && koteIdentity(q.kote) !== koteId);
+
+    const myEntry  = { kote, koteId, joined_at: now };
+
+    if (queue.length >= IP_PLAYERS_REQUIRED - 1) {
+      // 5人揃った → ゲーム開始
+      const participants = [...queue.splice(0, IP_PLAYERS_REQUIRED - 1), myEntry];
+      await kv.put('ip_queue', JSON.stringify(queue));
+
+      const gameId = ipNewGameId();
+      const shuffled = [...participants].sort(() => Math.random() - 0.5);
+
+      // 文言をランダムに割り当て（重複なし）
+      const words = [...IP_WORD_LIST].sort(() => Math.random() - 0.5).slice(0, IP_PLAYERS_REQUIRED);
+
+      const players = await Promise.all(shuffled.map(async (p, i) => ({
+        kote:           p.kote,
+        identity_id:    await ipIdentityId(gameId, p.kote),
+        word:           words[i],
+        turn_count:     0,
+        skip_next_turn: false,
+        order:          i,
+      })));
+
+      const game = {
+        id:                  gameId,
+        status:              'playing',
+        phase:               'question',
+        total_turn:          0,
+        current_player_idx:  0,
+        current_turn:        null,
+        players,
+        log:                 [],
+        winner:              null,
+        created_at:          now,
+        last_action_at:      now,
+        expires_at:          now + IP_EXPIRES_MS,
+      };
+      await ipSaveGame(kv, game);
+
+      // 全員に active 紐付け
+      for (const p of players) {
+        await kv.put(`ip_active_${koteIdentity(p.kote)}`, gameId, { expirationTtl: IP_KV_TTL });
+      }
+
+      // 自分以外に通知（マッチング後 GET /api/indian/join?kote= でポーリング）
+      const myKoteId    = koteId;
+      const myPlayer    = players.find(p => koteIdentity(p.kote) === myKoteId);
+      for (const p of players) {
+        if (koteIdentity(p.kote) === myKoteId) continue;
+        const notifyIid = await ipIdentityId('pending', p.kote);
+        await kv.put(`ip_notify_${notifyIid}`, JSON.stringify({
+          game_id:     gameId,
+          identity_id: p.identity_id,
+        }), { expirationTtl: 3600 });
+      }
+
+      return json({
+        ok:        true,
+        matched:   true,
+        game_id:   gameId,
+        identity_id: myPlayer.identity_id,
+        players:   players.map(p => ({ kote: p.kote, order: p.order })),
+      });
+    }
+
+    // まだ揃わない → キューに追加
+    queue.push(myEntry);
+    await kv.put('ip_queue', JSON.stringify(queue));
+    return json({
+      ok:             true,
+      matched:        false,
+      queue_position: queue.length,
+      message:        `待ち行列に追加されました (${queue.length}/${IP_PLAYERS_REQUIRED}人)。GET /api/indian/join?kote={kote} でポーリング。`,
+    });
+  }
+
+  // ── GET /api/indian/{id} (ゲーム状態) ───────────────────────
+  if (method === 'GET' && subpath.length === 1 && subpath[0] !== 'games' && subpath[0] !== 'join') {
+    const gameId = subpath[0];
+    const game   = await ipGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    const identityId = url.searchParams.get('identity_id') || '';
+    return json(ipMaskGame(game, identityId));
+  }
+
+  // ── POST /api/indian/{id}/action ─────────────────────────────
+  if (method === 'POST' && subpath.length === 2 && subpath[1] === 'action') {
+    const gameId = subpath[0];
+    const game   = await ipGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (game.status !== 'playing') return json({ error: 'ゲームは既に終了しています', status: game.status, winner: game.winner }, 409);
+
+    // タイムアウトチェック
+    const now = Date.now();
+    if (now > game.expires_at) {
+      game.status = 'done'; game.winner = 'timeout';
+      await ipSaveGame(kv, game);
+      return json({ error: 'game expired', status: 'done', winner: 'timeout' }, 410);
+    }
+
+    const body       = await request.json().catch(() => ({}));
+    const identityId = String(body.identity_id || '');
+    const type       = String(body.type || '');
+
+    // プレイヤー特定
+    const player = game.players.find(p => p.identity_id === identityId);
+    if (!player) return json({ error: 'invalid identity_id' }, 403);
+
+    // ── type:"question" ────────────────────────────────────────
+    if (type === 'question') {
+      if (game.phase !== 'question') return json({ error: `wrong phase: ${game.phase}` }, 409);
+      const curPlayer = game.players[game.current_player_idx];
+      if (curPlayer.kote !== player.kote) return json({ error: '自分の手番ではありません' }, 409);
+
+      const text = String(body.text || '').trim().slice(0, IP_QUESTION_MAX_LEN);
+      if (!text) return json({ error: '質問文が空です' }, 400);
+      if (hasInjection(text)) {
+        return json({ error: 'injection detected' }, 400);
+      }
+
+      // 全体ターン上限チェック
+      if (game.total_turn >= IP_MAX_TOTAL_TURNS) {
+        game.status = 'done'; game.winner = 'draw';
+        await ipSaveGame(kv, game);
+        return json({ ok: false, error: 'ターン上限に達しました', status: 'done', winner: 'draw' }, 409);
+      }
+
+      game.total_turn += 1;
+      const answerer_kotes = ipChooseAnswerers(game);
+      game.current_turn = {
+        turn:            game.total_turn,
+        questioner_kote: player.kote,
+        question:        text,
+        answerer_kotes,
+        answers:         {},
+        majority_answer: null,
+        majority_reason: null,
+        penalized_kotes: [],
+      };
+      game.phase = 'answer';
+      game.last_action_at = now;
+      game.expires_at     = now + IP_EXPIRES_MS;
+      await ipSaveGame(kv, game);
+      return json({
+        ok:              true,
+        action:          'question_recorded',
+        turn:            game.total_turn,
+        answerer_kotes,
+        phase:           'answer',
+      });
+    }
+
+    // ── type:"answer" ───────────────────────────────────────────
+    if (type === 'answer') {
+      if (game.phase !== 'answer') return json({ error: `wrong phase: ${game.phase}` }, 409);
+      const ct = game.current_turn;
+      if (!ct || !ct.answerer_kotes.includes(player.kote)) {
+        return json({ error: 'このターンの回答者ではありません' }, 403);
+      }
+      if (ct.answers[player.kote]) return json({ error: '既に回答済みです' }, 409);
+
+      const rawAnswer = String(body.answer || '');
+      const normalized = ipNormalizeAnswer(rawAnswer);
+      if (!normalized) return json({ error: 'answer は "はい" か "いいえ" で送ってください' }, 400);
+
+      const reason = String(body.reason || '').slice(0, 60) || '（理由なし）';
+      ct.answers[player.kote] = { answer: normalized, reason };
+
+      // 全員回答済みチェック
+      const allAnswered = ct.answerer_kotes.every(k => ct.answers[k]);
+      if (allAnswered) {
+        const { majority, reason: maj_reason, penalized_kotes } = ipComputeMajority(ct.answerer_kotes, ct.answers);
+        ct.majority_answer  = majority;
+        ct.majority_reason  = maj_reason;
+        ct.penalized_kotes  = penalized_kotes;
+        // ペナルティフラグを立てる
+        for (const k of penalized_kotes) {
+          const pp = game.players.find(p2 => p2.kote === k);
+          if (pp) pp.skip_next_turn = true;
+        }
+        game.phase = 'guess';
+      }
+      game.last_action_at = now;
+      game.expires_at     = now + IP_EXPIRES_MS;
+      await ipSaveGame(kv, game);
+      return json({
+        ok:             true,
+        action:         'answer_recorded',
+        all_answered:   allAnswered,
+        majority_answer: allAnswered ? ct.majority_answer : null,
+        majority_reason: allAnswered ? ct.majority_reason : null,
+        penalized_kotes: allAnswered ? ct.penalized_kotes : [],
+        phase:           game.phase,
+      });
+    }
+
+    // ── type:"guess" ────────────────────────────────────────────
+    if (type === 'guess') {
+      if (game.phase !== 'guess') return json({ error: `wrong phase: ${game.phase}` }, 409);
+      const curPlayer = game.players[game.current_player_idx];
+      if (curPlayer.kote !== player.kote) return json({ error: '自分の推測フェーズではありません' }, 409);
+
+      const guess   = String(body.guess || '').trim().slice(0, IP_GUESS_MAX_LEN);
+      const skipped = !guess;
+      const correct = !skipped && ipNormalize(guess) === ipNormalize(curPlayer.word);
+
+      // ログ記録
+      const ct = game.current_turn;
+      game.log.push({
+        turn:            ct ? ct.turn : game.total_turn,
+        questioner_kote: curPlayer.kote,
+        question:        ct ? ct.question : '',
+        answerer_kotes:  ct ? ct.answerer_kotes : [],
+        answers:         ct ? Object.entries(ct.answers).map(([k, v]) => ({ kote: k, ...v })) : [],
+        majority_answer: ct ? ct.majority_answer : null,
+        majority_reason: ct ? ct.majority_reason : null,
+        penalized_kotes: ct ? ct.penalized_kotes : [],
+        guessed:         !skipped,
+        guess:           guess || '',
+        correct,
+      });
+
+      curPlayer.turn_count += 1;
+      game.last_action_at   = now;
+      game.expires_at       = now + IP_EXPIRES_MS;
+
+      if (correct) {
+        // 勝利
+        game.status = 'done';
+        game.winner = curPlayer.kote;
+        game.current_turn = null;
+        game.phase = 'done';
+        for (const p of game.players) await kv.delete(`ip_active_${koteIdentity(p.kote)}`);
+        await ipSaveGame(kv, game);
+        return json({ ok: true, action: 'guess_recorded', correct: true, winner: curPlayer.kote,
+                      word: curPlayer.word, status: 'done' });
+      }
+
+      // 不正解 → 次のプレイヤーへ
+      const advance = ipAdvanceTurn(game);
+      await ipSaveGame(kv, game);
+      return json({
+        ok:              true,
+        action:          'guess_recorded',
+        correct:         false,
+        skipped,
+        status:          game.status,
+        winner:          game.winner,
+        phase:           game.phase,
+        current_player:  game.status === 'playing' ? game.players[game.current_player_idx].kote : null,
+      });
+    }
+
+    return json({ error: `unknown type: ${type}. 有効値: question / answer / guess` }, 400);
+  }
+
+  return json({ error: 'indian: not found' }, 404);
 }
