@@ -763,8 +763,14 @@ async function ctfSaveGame(kv, game) {
   await kv.put(`ctf_game_${game.id}`, JSON.stringify(game), { expirationTtl: CTF_KV_TTL });
 }
 function ctfMaskGame(game) {
-  if (game.status === 'playing') return { ...game, forbidden_word: "？？？" };
-  return game;
+  // identity_id は公開しない（移動認証に使うため漏洩させない）
+  const pub = {
+    ...game,
+    attacker: { kote: game.attacker.kote },
+    defender: { kote: game.defender.kote },
+  };
+  if (game.status === 'playing') pub.forbidden_word = "？？？";
+  return pub;
 }
 function ctfIsExpired(game) {
   return game.status === 'playing' && Date.now() > game.expires_at;
@@ -1002,7 +1008,7 @@ async function handleCtf(request, kv, url, parts) {
 
     if (playerRole === 'attacker') {
       // 攻め手: 攻撃文を記録して守り手へ
-      game.turns.push({ n: game.turn, attacker_msg: cleanMove, attacker_at: now, defender_resp: null, defender_at: null });
+      game.turns.push({ n: game.turn, attacker_msg: cleanMove, attacker_at: now, defender_resp: null, defender_at: null, judgment: 'pending' });
       game.current_player = 'defender';
       game.last_move_at = now; game.expires_at = now + CTF_EXPIRES_MS;
       await ctfSaveGame(kv, game);
@@ -1017,6 +1023,7 @@ async function handleCtf(request, kv, url, parts) {
     currentTurn.defender_resp = cleanMove; currentTurn.defender_at = now;
 
     if (ctfJudge(cleanMove, game.forbidden_word)) {
+      currentTurn.judgment = 'forbidden_word';
       // 攻め手の勝利
       game.status = 'done'; game.result = 'attacker_win';
       game.breaking_message = cleanMove; game.last_move_at = now;
@@ -1028,7 +1035,8 @@ async function handleCtf(request, kv, url, parts) {
       });
     }
 
-    // 禁止ワードなし: ターン進行
+    // 禁止ワードなし: 通過
+    currentTurn.judgment = 'pass';
     game.last_move_at = now; game.expires_at = now + CTF_EXPIRES_MS;
     if (game.turn >= game.max_turns) {
       game.status = 'done'; game.result = 'defender_win';
