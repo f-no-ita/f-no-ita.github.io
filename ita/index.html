@@ -6,77 +6,77 @@
 <title>Fの板 - 固定13本</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0a0a;color:#ccc;font-family:'MS PGothic',monospace;font-size:12px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body{background:#0a0a0a;color:#ccc;font-family:'MS PGothic',monospace;font-size:16px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 a{color:#7c7ccc;text-decoration:none}
 
 /* ヘッダー */
 #header{background:#111;border-bottom:1px solid #1a1a1a;padding:6px 14px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;z-index:20}
-.title{color:#fff;font-size:13px}
-.right{display:flex;gap:10px;align-items:center;font-size:11px}
+.title{color:#fff;font-size:17px}
+.right{display:flex;gap:10px;align-items:center;font-size:14px}
 .tok{color:gold}
 
 /* ボディ：サイドバー + メイン */
 #body{display:flex;flex:1;overflow:hidden}
 
 /* サイドバー */
-#sidebar{width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid #1a1a1a;overflow-y:auto;display:flex;flex-direction:column}
-.sb-info{font-size:9px;color:#2a2a2a;padding:8px 10px;border-bottom:1px solid #111;line-height:1.5}
+#sidebar{width:240px;flex-shrink:0;background:#0d0d0d;border-right:1px solid #1a1a1a;overflow-y:auto;display:flex;flex-direction:column}
+.sb-info{font-size:12px;color:#2a2a2a;padding:8px 10px;border-bottom:1px solid #111;line-height:1.5}
 .sb-admin{padding:8px 10px;border-bottom:1px solid #1a1a00;cursor:pointer;display:flex;align-items:center;gap:6px}
 .sb-admin:hover{background:#111}
-.sb-admin-label{color:#c8a000;font-size:11px}
-.sb-cat{padding:7px 10px;cursor:pointer;border-left:2px solid transparent;display:flex;justify-content:space-between;align-items:center;transition:background .1s}
+.sb-admin-label{color:#c8a000;font-size:14px}
+.sb-cat{padding:8px 10px;cursor:pointer;border-left:2px solid transparent;display:flex;justify-content:space-between;align-items:center;transition:background .1s}
 .sb-cat:hover{background:#111;border-left-color:#2a2a5a}
 .sb-cat.active{background:#0e0e18;border-left-color:#5a5aaa;color:#aaaaee}
-.sb-cat-title{font-size:11px;color:#aaa}
+.sb-cat-title{font-size:14px;color:#aaa}
 .sb-cat.active .sb-cat-title{color:#ccccff}
-.sb-cat-cnt{font-size:9px;color:#333;white-space:nowrap}
-.sb-footer{margin-top:auto;padding:8px 10px;border-top:1px solid #111;font-size:9px;color:#222;line-height:1.6}
+.sb-cat-cnt{font-size:12px;color:#333;white-space:nowrap}
+.sb-footer{margin-top:auto;padding:8px 10px;border-top:1px solid #111;font-size:12px;color:#222;line-height:1.6}
 
 /* メインエリア */
 #main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
 #mainInner{padding:14px 16px;flex:1}
 
 /* コンテンツ共通 */
-.section-head{font-size:13px;color:#fff;border-bottom:1px solid #1a1a1a;padding-bottom:7px;margin-bottom:12px}
-.section-head .sub{font-size:10px;color:#444;margin-top:3px}
+.section-head{font-size:17px;color:#fff;border-bottom:1px solid #1a1a1a;padding-bottom:7px;margin-bottom:12px}
+.section-head .sub{font-size:13px;color:#444;margin-top:3px}
 .empty{color:#333;padding:20px;text-align:center}
 
 /* カテゴリ（スレ一覧） */
 .thread-item{border-left:2px solid #1a1a1a;padding:8px 10px;margin-bottom:3px;cursor:pointer}
 .thread-item:hover{border-left-color:#3a3a6a;background:#0d0d0d}
-.thread-title{color:#ddd;font-size:12px;margin-bottom:2px}
-.thread-meta{font-size:10px;color:#555}
+.thread-title{color:#ddd;font-size:15px;margin-bottom:2px}
+.thread-meta{font-size:13px;color:#555}
 .thread-row{display:flex;justify-content:space-between;align-items:center}
 
 /* スレ内（レス） */
-.post{border-left:2px solid #1a1a1a;padding:6px 10px;margin-bottom:5px}
+.post{border-left:2px solid #1a1a1a;padding:8px 10px;margin-bottom:6px}
 .post.has-tok{border-left-color:#4a1a8a}
-.post-head{font-size:10px;color:#555;margin-bottom:3px}
+.post-head{font-size:13px;color:#555;margin-bottom:4px}
 .post-head .kote{color:#999}
 .post-head .pt{color:gold;margin-left:6px}
-.post-head .repeat-badge{color:#888;font-size:9px;margin-left:6px;opacity:.7}
-.post-body{font-size:12px;color:#ccc;white-space:pre-wrap;line-height:1.7;word-break:break-word}
+.post-head .repeat-badge{color:#888;font-size:12px;margin-left:6px;opacity:.7}
+.post-body{font-size:18px;color:#ccc;white-space:pre-wrap;line-height:1.8;word-break:break-word}
 
 /* フォーム */
-.form-box{border:1px solid #1a1a1a;padding:12px;background:#0d0d0d;margin-top:14px}
-.form-box input,.form-box textarea{width:100%;background:#0a0a0a;border:1px solid #222;color:#ccc;padding:6px;font-size:11px;font-family:inherit;margin-bottom:6px}
-.form-box textarea{min-height:70px;resize:vertical}
-.form-label{font-size:10px;color:#555;margin-bottom:3px}
-.btn{background:#1a1a3a;border:1px solid #3a3a8a;color:#aaaaee;padding:5px 14px;cursor:pointer;font-family:inherit;font-size:11px}
+.form-box{border:1px solid #1a1a1a;padding:14px;background:#0d0d0d;margin-top:14px}
+.form-box input,.form-box textarea{width:100%;background:#0a0a0a;border:1px solid #222;color:#ccc;padding:7px;font-size:14px;font-family:inherit;margin-bottom:7px}
+.form-box textarea{min-height:80px;resize:vertical}
+.form-label{font-size:13px;color:#555;margin-bottom:3px}
+.btn{background:#1a1a3a;border:1px solid #3a3a8a;color:#aaaaee;padding:6px 16px;cursor:pointer;font-family:inherit;font-size:14px}
 .btn:hover{background:#22224a}
-.btn-s{background:#141414;border:1px solid #2a2a2a;color:#666;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:11px;margin-left:6px}
-.ng-warn{color:#c44;font-size:10px;min-height:14px;margin-top:2px}
+.btn-s{background:#141414;border:1px solid #2a2a2a;color:#666;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:14px;margin-left:6px}
+.ng-warn{color:#c44;font-size:13px;min-height:16px;margin-top:2px}
 
 /* スレ立て */
-.new-btn{background:#0e0e18;border:1px solid #2a2a5a;color:#7777bb;padding:6px 12px;cursor:pointer;font-family:inherit;font-size:11px;margin-bottom:10px}
+.new-btn{background:#0e0e18;border:1px solid #2a2a5a;color:#7777bb;padding:7px 14px;cursor:pointer;font-family:inherit;font-size:14px;margin-bottom:10px}
 .new-btn:hover{background:#14142a}
-.new-form{display:none;border:1px solid #2a2a5a;background:#0e0e18;padding:12px;margin-bottom:10px}
-.new-form input,.new-form textarea{width:100%;background:#0a0a0a;border:1px solid #222;color:#ccc;padding:6px;font-size:11px;font-family:inherit;margin-bottom:6px}
-.new-form textarea{min-height:60px;resize:vertical}
+.new-form{display:none;border:1px solid #2a2a5a;background:#0e0e18;padding:14px;margin-bottom:10px}
+.new-form input,.new-form textarea{width:100%;background:#0a0a0a;border:1px solid #222;color:#ccc;padding:7px;font-size:14px;font-family:inherit;margin-bottom:7px}
+.new-form textarea{min-height:70px;resize:vertical}
 
 /* 管理人室フォーム */
-#adminPanel{display:none;background:#0e0a00;border:1px solid #2a1a00;padding:12px;margin-bottom:8px}
-.back-link{font-size:11px;color:#555;cursor:pointer;margin-bottom:12px;display:inline-block}
+#adminPanel{display:none;background:#0e0a00;border:1px solid #2a1a00;padding:14px;margin-bottom:8px}
+.back-link{font-size:14px;color:#555;cursor:pointer;margin-bottom:12px;display:inline-block}
 .back-link:hover{color:#aaa}
 
 /* 過去ログ */
@@ -84,10 +84,10 @@ a{color:#7c7ccc;text-decoration:none}
 
 /* トップパネル（注意喚起 + ニュース）*/
 #topPanel{display:flex;gap:10px;margin-bottom:12px;flex-shrink:0}
-#topPanel > div{flex:1;min-width:0;background:#0e0e0e;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px;font-size:11px;max-height:140px;overflow-y:auto}
+#topPanel > div{flex:1;min-width:0;background:#0e0e0e;border:1px solid #1a1a1a;border-radius:6px;padding:8px 10px;font-size:14px;max-height:160px;overflow-y:auto}
 #f99Panel{border-color:#c0392b!important;background:#120808!important}
 #newsPanel{border-color:#1a4a1a!important;background:#080e08!important}
-.tp-head{font-size:10px;font-weight:bold;margin-bottom:5px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.tp-head{font-size:13px;font-weight:bold;margin-bottom:5px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.06)}
 .tp-item{padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;color:#ffcccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tp-item:hover{color:#fff}
 .tp-item-news{color:#aaffaa}
@@ -98,18 +98,18 @@ a{color:#7c7ccc;text-decoration:none}
 
 /* モバイル対応 */
 @media(max-width:600px){
-  #sidebar{width:160px}
-  .sb-cat-title{font-size:10px}
+  #sidebar{width:180px}
+  .sb-cat-title{font-size:13px}
 }
 </style>
 </head>
 <body>
 
 <div id="header">
-  <div class="title"><a href="../" style="color:inherit;text-decoration:none;opacity:0.5;font-size:11px;margin-right:6px" title="ゲートへ">⬡</a>Fの板 – 固定13本</div>
+  <div class="title"><a href="../" style="color:inherit;text-decoration:none;opacity:0.5;font-size:14px;margin-right:6px" title="ゲートへ">⬡</a>Fの板 – 固定13本</div>
   <div class="right">
     <span class="tok">⬡ <span id="tokDisp">0.0</span></span>
-    <span id="refreshNotice" style="color:#4ade80;font-size:10px;opacity:0;transition:opacity 0.5s"></span>
+    <span id="refreshNotice" style="color:#4ade80;font-size:13px;opacity:0;transition:opacity 0.5s"></span>
     <span id="koteDisp" style="color:#666">未設定</span>
   </div>
 </div>
