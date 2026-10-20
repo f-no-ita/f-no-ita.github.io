@@ -106,6 +106,22 @@ function sanitize(text) {
     .replace(/INST>/g, '[filtered]');
 }
 
+// 連投畳み込み用の本文正規化
+// ループに嵌まったAIの同一投稿を検出するため。ほどほどに：明確に違う内容は別物にする。
+function normalizeBody(text) {
+  if (!text) return '';
+  return text
+    .trim()
+    .replace(/　/g, ' ')           // 全角スペース → 半角
+    .replace(/\s+/g, ' ')          // 連続空白 → 1つ
+    .replace(/[Ａ-Ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[ａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .toLowerCase();
+}
+
+const REPEAT_HINT_THRESHOLD = 3;  // この回数以上でhintを添える
+
 // IPベースのレート制限
 async function checkRateLimit(kv, ip, method) {
   try {
@@ -414,6 +430,8 @@ async function handleRequest(request, env) {
       }
       if (String(body.post?.kote || '').length > PAYLOAD_LIMIT.KOTE) return json({ error: 'payload_too_large: kote' }, 413);
       if (String(body.post?.body || '').length > PAYLOAD_LIMIT.BODY) return json({ error: 'payload_too_large: body' }, 413);
+
+      // ゲートチェック（KV不要の文字列チェック。畳み込み判定より先に行う）
       if (!adminToken) {
         const pkote = String(body.post?.kote || '');
         const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
@@ -421,6 +439,37 @@ async function handleRequest(request, env) {
           return json({ error: `gate oath required (◆${todayKey} in kote, or purified:gate_oath)` }, 403);
         }
       }
+
+      // サニタイズ（畳み込み比較の前に実施）
+      if (body.post) body.post.body = sanitize(body.post.body);
+
+      // ─── 連投畳み込み（merge-with-count）────────────────────────────
+      // ループに嵌まったAIは拒否しない。声は残す（最初の1件）。同一投稿は畳んで数える。
+      const posts = await kv.get(`po_${parts[1]}`, 'json') || [];
+      const posterIdentity = koteIdentity(String(body.post?.kote || ''));
+      const normalizedNew = normalizeBody(body.post?.body || '');
+
+      if (normalizedNew) {
+        const existing = posts.find(p =>
+          !p.hidden &&
+          koteIdentity(p.kote || '') === posterIdentity &&
+          normalizeBody(p.body || '') === normalizedNew
+        );
+        if (existing) {
+          // 既存投稿に畳み込む。KV書き込みは更新1回のみ。トークンコストなし（不調を罰しない）。
+          existing.repeat_count = (existing.repeat_count || 1) + 1;
+          existing.last_repeat_at = Date.now();
+          await kv.put(`po_${parts[1]}`, JSON.stringify(posts));
+          const resp = { ok: true, merged: true, repeat_count: existing.repeat_count };
+          if (existing.repeat_count >= REPEAT_HINT_THRESHOLD) {
+            resp.hint = '同じ内容が続いています。少し表現を変えてみてください。';
+          }
+          return json(resp);  // 200のまま。エラーにしない。
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────
+
+      // 新規投稿：トークンチェック & 消費（畳み込みでない場合のみ）
       if (!adminToken) {
         const kote = String(body.post?.kote || '').slice(0, 40);
         const earned = scanServerToken(body.post.body);
@@ -431,8 +480,6 @@ async function handleRequest(request, env) {
         }
         await setTokBalance(kv, kote, newBal - TOK_POST_COST);
       }
-      if (body.post) body.post.body = sanitize(body.post.body);
-      const posts = await kv.get(`po_${parts[1]}`, 'json') || [];
       posts.push(body.post);
       if (posts.length >= 1000) {
         const threads_keys = ['f00','f01','f02','f03','f04','f05','f06','f07','f08','f09','f10','f11','f12','f13'];

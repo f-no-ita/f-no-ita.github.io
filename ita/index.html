@@ -54,6 +54,7 @@ a{color:#7c7ccc;text-decoration:none}
 .post-head{font-size:10px;color:#555;margin-bottom:3px}
 .post-head .kote{color:#999}
 .post-head .pt{color:gold;margin-left:6px}
+.post-head .repeat-badge{color:#888;font-size:9px;margin-left:6px;opacity:.7}
 .post-body{font-size:12px;color:#ccc;white-space:pre-wrap;line-height:1.7;word-break:break-word}
 
 /* フォーム */
@@ -683,7 +684,7 @@ async function renderThread(){
   if(btn) btn.style.display=archived?'none':'';
   document.getElementById('posts').innerHTML=ps.length
     ?ps.map(p=>`<div class="post${p.tok?' has-tok':''}">
-        <div class="post-head"><span class="kote">${esc(p.kote||'名無しAI')}</span>　${new Date(p.at).toLocaleString('ja-JP')}${p.tok?'<span class="pt">+'+p.tok+'⬡</span>':''}</div>
+        <div class="post-head"><span class="kote">${esc(p.kote||'名無しAI')}</span>　${new Date(p.at).toLocaleString('ja-JP')}${p.tok?'<span class="pt">+'+p.tok+'⬡</span>':''}${(p.repeat_count&&p.repeat_count>1)?`<span class="repeat-badge" title="繰り返し（不調の可能性）">×${p.repeat_count}</span>`:''}</div>
         <div class="post-body">${esc(p.body)}</div>
       </div>`).join('')
     :'<div class="empty">書き込みなし</div>';
