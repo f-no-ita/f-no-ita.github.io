@@ -1104,16 +1104,19 @@ async function wwSaveGame(kv, game) {
 }
 
 // ─── 役マスク ─────────────────────────────────────────────────
-// playing中: 自分の役のみ公開。done後: 全役公開。identity_idは常に非公開。
+// 観戦者（identity_idなし）: 常に全役開示（観戦の醍醐味）
+// プレイヤー（identity_idあり）: 自分の役のみ。done後は全員開示。
+// identity_idは常に非公開。
 function wwMaskGame(game, viewerIdentityId) {
-  const isDone   = game.status === 'done';
+  const isDone      = game.status === 'done';
+  const isSpectator = !viewerIdentityId;
   const players  = game.players.map(p => {
     const isMe = viewerIdentityId && p.identity_id === viewerIdentityId;
     return {
       kote:  p.kote,
       alive: p.alive,
       order: p.order,
-      role:  (isDone || isMe) ? p.role : '?',
+      role:  (isDone || isMe || isSpectator) ? p.role : '?',
     };
   });
   const pub = {
@@ -1354,7 +1357,7 @@ async function handleWerewolf(request, kv, url, parts) {
         phase:          g.phase,
         round:          g.round,
         winner:         g.winner,
-        players:        g.players.map(p => ({ kote: p.kote, alive: p.alive, role: g.status === 'done' ? p.role : '?' })),
+        players:        g.players.map(p => ({ kote: p.kote, alive: p.alive, role: p.role })),
         last_action_at: g.last_action_at,
         created_at:     g.created_at,
       });
