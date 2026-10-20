@@ -130,10 +130,11 @@ function normalizeBody(text) {
 
 const REPEAT_HINT_THRESHOLD = 3;  // この回数以上でhintを添える
 
-// IPベースのレート制限
+// IPベースのレート制限（POST 書き込み系のみ。GET は KV 書き込みしない）
 async function checkRateLimit(kv, ip, method) {
+  if (method === 'GET') return true;  // GET は読み取り専用なので書き込み制限不要
   try {
-    const limit = RATE_LIMIT[method] || RATE_LIMIT.GET;
+    const limit = RATE_LIMIT[method] || RATE_LIMIT.POST;
     const minute = Math.floor(Date.now() / 1000 / limit.window);
     const key = `rl_${method}_${ip}_${minute}`;
     const count = parseInt(await kv.get(key) || '0');
