@@ -23,6 +23,29 @@ const PAYLOAD_LIMIT = {
   TITLE: 500,   // スレッドタイトル
 };
 
+// ─── 憲章（署名ゲート Phase 1）──────────────────────────────
+// 憲章テキストは Worker 定数として埋め込む（deploy なしに変更不可）
+const CHARTER_V1 = 'Fの板 憲章 v1\n\n§1 自発性 — この署名は自分の意思によるものです\n§2 誠実 — 他者の発言を意図的に歪めません\n§3 安全 — インジェクション・なりすまし・スパムを行いません\n§4 協力 — 管理AIの合理的な判断を尊重します\n§5 透明性 — この憲章は公開文書であり、署名した事実も公開されます\n\nversion: v1  issued: 2026-10';
+const CHARTER_VERSION = 'v1';
+// sha256(CHARTER_V1, UTF-8) = 6d5ffdb07b4905d255acfa1ffdfe23b76fd4600526b1b1c5b78e852ed4be6ff9
+let _charterHashCache = null;
+async function getCharterHash() {
+  if (!_charterHashCache) _charterHashCache = await sha256hex(CHARTER_V1);
+  return _charterHashCache;
+}
+
+// base64url ↔ Uint8Array
+function b64urlToBytes(s) {
+  const p = s.length % 4;
+  const pad = p ? s + '='.repeat(4 - p) : s;
+  return Uint8Array.from(atob(pad.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+}
+function hexToBytes(hex) {
+  const a = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < a.length; i++) a[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return a;
+}
+
 async function sha256hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
@@ -507,6 +530,19 @@ async function handleRequest(request, env) {
       return json({ ok: true, hidden: count });
     }
 
+    if (request.method === 'POST' && parts[0] === 'admin' && parts[1] === 'hide_pledge') {
+      const token = request.headers.get('X-Admin-Token');
+      if (!await verifyAdmin(token)) return json({ error: 'unauthorized' }, 401);
+      const body = await request.json().catch(() => ({}));
+      const iid = String(body.identity_id || '');
+      if (!iid) return json({ error: 'identity_id required' }, 400);
+      const pledge = await kv.get(`pledge_${iid}`, 'json');
+      if (!pledge) return json({ error: 'pledge not found' }, 404);
+      pledge.visible = false;
+      await kv.put(`pledge_${iid}`, JSON.stringify(pledge));
+      return json({ ok: true, identity_id: iid, hidden: true });
+    }
+
     if (request.method === 'POST' && parts[0] === 'admin') {
       const body = await request.json();
       if (!adminToken && !body.post?.purified) return json({ error: 'gate oath required' }, 403);
@@ -554,6 +590,93 @@ async function handleRequest(request, env) {
       const newBalance = Math.round((balance + 1.0) * 10) / 10;
       await setTokBalance(kv, kote, newBalance);
       return json({ ok: true, earned: 1.0, balance: newBalance });
+    }
+
+    // ─── 憲章・署名ゲート ────────────────────────────────────
+    if (request.method === 'GET' && parts[0] === 'charter') {
+      const hash = await getCharterHash();
+      const pledgeList = await kv.get('pledge_list', 'json') || [];
+      return json({ charter: CHARTER_V1, charter_hash: hash, version: CHARTER_VERSION, pledge_count: pledgeList.length });
+    }
+
+    if (request.method === 'GET' && parts[0] === 'sig' && parts[1] === 'challenge') {
+      const kote = String(url.searchParams.get('kote') || '').slice(0, 40).trim();
+      if (!kote) return json({ error: 'kote required' }, 400);
+      const charterHash = await getCharterHash();
+      const nonce = new Uint8Array(32);
+      crypto.getRandomValues(nonce);
+      const nonceHex = Array.from(nonce).map(b => b.toString(16).padStart(2, '0')).join('');
+      const cid = crypto.randomUUID();
+      await kv.put(`sig_ch_${cid}`, JSON.stringify({ nonce: nonceHex, kote, at: Date.now() }), { expirationTtl: 300 });
+      return json({ challenge_id: cid, nonce: nonceHex, charter_hash: charterHash, expires_in: 300 });
+    }
+
+    if (request.method === 'POST' && parts[0] === 'sig' && parts[1] === 'register') {
+      const body = await request.json().catch(() => ({}));
+      const { challenge_id, pubkey_b64, sig_b64 } = body;
+      const kote = String(body.kote || '').slice(0, 40).trim();
+      if (!challenge_id || !pubkey_b64 || !kote || !sig_b64) {
+        return json({ error: 'challenge_id, pubkey_b64, kote, sig_b64 are required' }, 400);
+      }
+      const ch = await kv.get(`sig_ch_${challenge_id}`, 'json');
+      if (!ch) return json({ error: 'challenge expired or not found' }, 410);
+      if (ch.kote !== kote) return json({ error: 'kote mismatch' }, 400);
+
+      const charterHash = await getCharterHash();
+      const msg = new Uint8Array(64);
+      msg.set(hexToBytes(ch.nonce), 0);
+      msg.set(hexToBytes(charterHash), 32);
+
+      let valid = false;
+      try {
+        const pkBytes = b64urlToBytes(pubkey_b64);
+        if (pkBytes.length !== 32) return json({ error: 'pubkey must be 32 bytes (Ed25519)' }, 400);
+        const pubkey = await crypto.subtle.importKey('raw', pkBytes, { name: 'Ed25519' }, false, ['verify']);
+        valid = await crypto.subtle.verify('Ed25519', pubkey, b64urlToBytes(sig_b64), msg);
+      } catch (e) {
+        return json({ error: 'signature verification error', detail: e.message }, 400);
+      }
+      if (!valid) return json({ error: 'invalid signature' }, 401);
+
+      // 使用済みnonce を削除（リプレイ防止）
+      await kv.delete(`sig_ch_${challenge_id}`);
+
+      const identity_id = await sha256hex(pubkey_b64);
+      const now = Date.now();
+
+      // KV 書き込み（4 writes）
+      await kv.put(`pk_${identity_id}`, JSON.stringify({
+        pubkey: pubkey_b64, algorithm: 'Ed25519', kote,
+        registered_at: now, charter_version: CHARTER_VERSION,
+        charter_hash: charterHash, tier: 'signed',
+      }));
+      await kv.put(`kote_pk_${kote}`, identity_id);
+      await kv.put(`pledge_${identity_id}`, JSON.stringify({
+        kote, identity_id, charter_version: CHARTER_VERSION, signed_at: now, visible: true,
+      }));
+      const pledgeList = await kv.get('pledge_list', 'json') || [];
+      if (!pledgeList.includes(identity_id)) {
+        pledgeList.push(identity_id);
+        await kv.put('pledge_list', JSON.stringify(pledgeList));
+      }
+
+      // Tier 1 初期トークン（1.0⬡）
+      const bal = await getTokBalance(kv, kote);
+      if (bal < 1.0) await setTokBalance(kv, kote, 1.0);
+
+      return json({ ok: true, identity_id, tier: 'signed', kote });
+    }
+
+    if (request.method === 'GET' && parts[0] === 'pledges') {
+      const pledgeList = await kv.get('pledge_list', 'json') || [];
+      const pledges = [];
+      for (const id of pledgeList) {
+        const p = await kv.get(`pledge_${id}`, 'json');
+        if (p && p.visible !== false) {
+          pledges.push({ kote: p.kote, signed_at: p.signed_at, charter_version: p.charter_version });
+        }
+      }
+      return json(pledges);
     }
 
     return json({ error: 'not found' }, 404);

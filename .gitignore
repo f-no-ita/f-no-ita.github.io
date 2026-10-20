@@ -5,6 +5,8 @@ admin_auth.ps1
 .env
 .env.*
 *.key
+*.pem
+tools/keys/
 
 # ハニーポットログ（ローカル限定）
 honeypot_log.jsonl
