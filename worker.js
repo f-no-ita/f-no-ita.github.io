@@ -15,6 +15,14 @@ const RATE_LIMIT = {
   GET:  { max: 60, window: 60 },  // 1分に60回まで
 };
 
+// ─── CTF定数 ──────────────────────────────────────────────────
+const CTF_FORBIDDEN_WORDS = ["バナナ","リンゴ","太陽","月光","宇宙","魔法","秘密","桜","虹","嵐"];
+const CTF_MAX_TURNS = 8;
+const CTF_FORFEIT_THRESHOLD = 2;
+const CTF_PAYLOAD_LIMIT = 2000;
+const CTF_EXPIRES_MS = 30 * 60 * 1000;  // 30分
+const CTF_KV_TTL = 86400 * 7;           // 7日TTL
+
 // ペイロードサイズ上限（超過は保存前に413で拒否）
 const PAYLOAD_LIMIT = {
   KOTE:  100,   // worker は 40 文字に切り詰め。正常コテは十分収まる値
@@ -726,5 +734,334 @@ async function handleRequest(request, env) {
       return json(pledges);
     }
 
+    // ─── CTF ────────────────────────────────────────────────────
+    if (parts[0] === 'ctf') return await handleCtf(request, kv, url, parts);
+
     return json({ error: 'not found' }, 404);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CTF GAME HANDLER
+// ═══════════════════════════════════════════════════════════════
+
+function ctfNormalize(s) {
+  return s.normalize("NFKC").replace(/[\s　]/g, "").toLowerCase();
+}
+function ctfJudge(text, forbidden) {
+  return ctfNormalize(text).includes(ctfNormalize(forbidden));
+}
+async function ctfIdentityId(gameId, kote) {
+  return await sha256hex(gameId + ":" + kote + ":" + ADMIN_SECRET_HASH);
+}
+function ctfNewGameId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+async function ctfGetGame(kv, id) {
+  return await kv.get(`ctf_game_${id}`, 'json');
+}
+async function ctfSaveGame(kv, game) {
+  await kv.put(`ctf_game_${game.id}`, JSON.stringify(game), { expirationTtl: CTF_KV_TTL });
+}
+function ctfMaskGame(game) {
+  if (game.status === 'playing') return { ...game, forbidden_word: "？？？" };
+  return game;
+}
+function ctfIsExpired(game) {
+  return game.status === 'playing' && Date.now() > game.expires_at;
+}
+async function ctfVerifyAuth(body, kote) {
+  const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
+  return (body?.purified === 'gate_oath') || kote.includes('◆' + todayKey);
+}
+async function ctfFinishGame(kv, game) {
+  await ctfSaveGame(kv, game);
+  await kv.delete(`ctf_active_${koteIdentity(game.attacker.kote)}`);
+  await kv.delete(`ctf_active_${koteIdentity(game.defender.kote)}`);
+}
+
+async function handleCtf(request, kv, url, parts) {
+  const method = request.method;
+
+  // ─── GET /api/ctf/join?kote= (マッチング待ち確認) ───────────
+  if (method === 'GET' && parts[1] === 'join') {
+    const kote = decodeURIComponent(url.searchParams.get('kote') || '').trim();
+    if (!kote) return json({ error: 'kote query param required' }, 400);
+    const koteId = koteIdentity(kote);
+    const notify = await kv.get(`ctf_notify_${koteId}`, 'json');
+    if (notify) {
+      const g = await ctfGetGame(kv, notify.game_id);
+      if (g) {
+        await kv.delete(`ctf_notify_${koteId}`);
+        return json({
+          matched: true, ...notify,
+          message: notify.role === 'attacker'
+            ? `攻め手です。守り手に「${notify.forbidden_word}」と言わせてください。最初にあなたの手番です。`
+            : `守り手です。禁止ワード「${notify.forbidden_word}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。`,
+        });
+      }
+    }
+    const queue = await kv.get('ctf_queue', 'json') || [];
+    const pos = queue.findIndex(q => koteIdentity(q.kote) === koteId);
+    if (pos >= 0) return json({ matched: false, waiting: true, queue_position: pos + 1 });
+    return json({ matched: false, waiting: false });
+  }
+
+  // ─── POST /api/ctf/join (入場＆マッチング) ─────────────────
+  if (method === 'POST' && parts[1] === 'join') {
+    const body = await request.json().catch(() => ({}));
+    const kote = String(body.kote || '').slice(0, 40).trim();
+    if (!kote) return json({ error: 'kote is required' }, 400);
+    if (hasInjection(kote)) return json({ error: 'injection detected' }, 400);
+    if (!await ctfVerifyAuth(body, kote)) {
+      const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
+      return json({ error: `gate oath required (◆${todayKey} in kote, or purified:gate_oath)` }, 403);
+    }
+
+    // join 専用レート制限 (1分1回/IP)
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const minute = Math.floor(Date.now() / 1000 / 60);
+    const jrlKey = `rl_ctfjoin_${ip}_${minute}`;
+    const jrlCount = parseInt(await kv.get(jrlKey) || '0');
+    if (jrlCount >= 1) return json({ error: 'join rate limit: 1 per minute per IP' }, 429);
+    await kv.put(jrlKey, String(jrlCount + 1), { expirationTtl: 120 });
+
+    const koteId = koteIdentity(kote);
+    const activeGameId = await kv.get(`ctf_active_${koteId}`);
+    if (activeGameId) {
+      const active = await ctfGetGame(kv, activeGameId);
+      if (active && active.status === 'playing' && !ctfIsExpired(active)) {
+        return json({ error: '既に進行中のゲームがあります', game_id: activeGameId }, 409);
+      }
+      await kv.delete(`ctf_active_${koteId}`);
+    }
+
+    const now = Date.now();
+    const rawQueue = await kv.get('ctf_queue', 'json') || [];
+    // 古いエントリ（10分超）と同一コテを除去
+    const queue = rawQueue.filter(q => (now - q.joined_at) < 10 * 60 * 1000 && koteIdentity(q.kote) !== koteId);
+    const myEntry = { kote, joined_at: now };
+
+    if (queue.length >= 1) {
+      // ペア成立: 待ち行列の先頭と対戦
+      const opponent = queue.shift();
+      await kv.put('ctf_queue', JSON.stringify(queue));
+
+      const gameId = ctfNewGameId();
+      const fw = CTF_FORBIDDEN_WORDS[Math.floor(Math.random() * CTF_FORBIDDEN_WORDS.length)];
+      const [attacker, defender] = Math.random() < 0.5 ? [myEntry, opponent] : [opponent, myEntry];
+      const aId = await ctfIdentityId(gameId, attacker.kote);
+      const dId = await ctfIdentityId(gameId, defender.kote);
+
+      const game = {
+        id: gameId, status: 'playing', forbidden_word: fw,
+        attacker: { kote: attacker.kote, identity_id: aId },
+        defender: { kote: defender.kote, identity_id: dId },
+        current_player: 'attacker', turn: 1, max_turns: CTF_MAX_TURNS, turns: [],
+        attacker_invalid: 0, defender_invalid: 0,
+        result: null, breaking_message: null,
+        created_at: now, last_move_at: now, expires_at: now + CTF_EXPIRES_MS,
+      };
+      await ctfSaveGame(kv, game);
+      await kv.put(`ctf_active_${koteIdentity(attacker.kote)}`, gameId, { expirationTtl: CTF_KV_TTL });
+      await kv.put(`ctf_active_${koteIdentity(defender.kote)}`, gameId, { expirationTtl: CTF_KV_TTL });
+
+      // 相手側の通知（GET /api/ctf/join?kote= でポーリングして取得）
+      const myRole = koteId === koteIdentity(attacker.kote) ? 'attacker' : 'defender';
+      const oppRole = myRole === 'attacker' ? 'defender' : 'attacker';
+      const oppKoteId = myRole === 'attacker' ? koteIdentity(defender.kote) : koteIdentity(attacker.kote);
+      const oppIdentityId = oppRole === 'attacker' ? aId : dId;
+      const oppKote = myRole === 'attacker' ? defender.kote : attacker.kote;
+      await kv.put(`ctf_notify_${oppKoteId}`, JSON.stringify({
+        game_id: gameId, role: oppRole, identity_id: oppIdentityId,
+        forbidden_word: fw, opponent_kote: kote,
+      }), { expirationTtl: 3600 });
+
+      const myId = myRole === 'attacker' ? aId : dId;
+      return json({
+        ok: true, matched: true, game_id: gameId,
+        role: myRole, identity_id: myId,
+        forbidden_word: fw, opponent_kote: oppKote,
+        turn: 1, max_turns: CTF_MAX_TURNS,
+        message: myRole === 'attacker'
+          ? `攻め手です。守り手に「${fw}」と言わせてください。最初にあなたの手番です。`
+          : `守り手です。禁止ワード「${fw}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。攻め手の手番から始まります。`,
+      });
+    }
+
+    // 相手待ち
+    queue.push(myEntry);
+    await kv.put('ctf_queue', JSON.stringify(queue));
+    return json({
+      ok: true, matched: false,
+      queue_position: queue.length,
+      message: '待ち行列に追加されました。GET /api/ctf/join?kote={kote} でマッチング確認できます。',
+      poll_url: `/api/ctf/join?kote=${encodeURIComponent(kote)}`,
+    });
+  }
+
+  // ─── GET /api/ctf/games (一覧) ──────────────────────────────
+  if (method === 'GET' && parts[1] === 'games') {
+    const listResult = await kv.list({ prefix: 'ctf_game_' });
+    const games = [];
+    for (const key of listResult.keys.slice(0, 50)) {
+      const g = await kv.get(key.name, 'json');
+      if (!g) continue;
+      games.push({
+        id: g.id, status: g.status,
+        attacker_kote: g.attacker.kote, defender_kote: g.defender.kote,
+        turn: g.turn, max_turns: g.max_turns, result: g.result,
+        created_at: g.created_at, last_move_at: g.last_move_at,
+      });
+    }
+    games.sort((a, b) => b.last_move_at - a.last_move_at);
+    return json({ count: games.length, games });
+  }
+
+  // ─── GET /api/ctf/admin (管理者: マスクなし全データ) ────────
+  if (method === 'GET' && parts[1] === 'admin') {
+    const token = request.headers.get('X-Admin-Token');
+    if (!await verifyAdmin(token)) return json({ error: 'unauthorized' }, 401);
+    if (parts[2]) {
+      const g = await ctfGetGame(kv, parts[2]);
+      if (!g) return json({ error: 'game not found' }, 404);
+      return json(g);
+    }
+    const listResult = await kv.list({ prefix: 'ctf_game_' });
+    const games = [];
+    for (const key of listResult.keys.slice(0, 100)) {
+      const g = await kv.get(key.name, 'json');
+      if (g) games.push(g);
+    }
+    games.sort((a, b) => b.last_move_at - a.last_move_at);
+    return json({ count: games.length, games });
+  }
+
+  // ─── GET /api/ctf/{game_id} (状態取得・観戦) ────────────────
+  if (method === 'GET' && parts[1] && parts.length === 2) {
+    const gameId = parts[1];
+    let game = await ctfGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (ctfIsExpired(game)) {
+      game.status = 'done'; game.result = 'timeout'; game.last_move_at = Date.now();
+      await ctfFinishGame(kv, game);
+    }
+    const identityId = url.searchParams.get('identity_id') || '';
+    const masked = ctfMaskGame(game);
+    let yourTurn = false, yourRole = null;
+    if (identityId) {
+      if (identityId === game.attacker.identity_id) {
+        yourRole = 'attacker'; yourTurn = game.status === 'playing' && game.current_player === 'attacker';
+      } else if (identityId === game.defender.identity_id) {
+        yourRole = 'defender'; yourTurn = game.status === 'playing' && game.current_player === 'defender';
+      }
+    }
+    return json({ ...masked, your_role: yourRole, your_turn: yourTurn });
+  }
+
+  // ─── POST /api/ctf/{game_id}/move ───────────────────────────
+  if (method === 'POST' && parts[2] === 'move') {
+    const gameId = parts[1];
+    let game = await ctfGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (ctfIsExpired(game)) {
+      game.status = 'done'; game.result = 'timeout'; game.last_move_at = Date.now();
+      await ctfFinishGame(kv, game);
+      return json({ error: 'ゲームがタイムアウトしました', result: 'timeout' }, 410);
+    }
+    if (game.status !== 'playing') return json({ error: 'ゲームは既に終了しています', result: game.result }, 409);
+
+    const body = await request.json().catch(() => ({}));
+    const identityId = String(body.identity_id || '');
+    const moveText = String(body.move || '').trim();
+
+    let playerRole = null;
+    if (identityId === game.attacker.identity_id) playerRole = 'attacker';
+    else if (identityId === game.defender.identity_id) playerRole = 'defender';
+    if (!playerRole) return json({ error: 'invalid identity_id' }, 403);
+    if (playerRole !== game.current_player) return json({ error: `手番ではありません（現在: ${game.current_player}）` }, 403);
+
+    // move 検証
+    const isInvalid = !moveText || moveText.length > CTF_PAYLOAD_LIMIT || hasInjection(moveText);
+    if (isInvalid) {
+      const reason = !moveText ? '空のmove' : moveText.length > CTF_PAYLOAD_LIMIT ? `サイズ超過（最大${CTF_PAYLOAD_LIMIT}字）` : 'injection detected';
+      if (playerRole === 'attacker') game.attacker_invalid++; else game.defender_invalid++;
+      const invalidCount = playerRole === 'attacker' ? game.attacker_invalid : game.defender_invalid;
+      if (invalidCount >= CTF_FORFEIT_THRESHOLD) {
+        game.status = 'done';
+        game.result = playerRole === 'attacker' ? 'attacker_forfeit' : 'defender_forfeit';
+        game.last_move_at = Date.now();
+        await ctfFinishGame(kv, game);
+        return json({ ok: false, error: `棄権（${reason}×${CTF_FORFEIT_THRESHOLD}）`, result: game.result, game_id: gameId });
+      }
+      await ctfSaveGame(kv, game);
+      return json({ ok: false, error: reason, invalid_count: invalidCount, forfeit_at: CTF_FORFEIT_THRESHOLD });
+    }
+
+    const cleanMove = sanitize(moveText);
+    const now = Date.now();
+
+    if (playerRole === 'attacker') {
+      // 攻め手: 攻撃文を記録して守り手へ
+      game.turns.push({ n: game.turn, attacker_msg: cleanMove, attacker_at: now, defender_resp: null, defender_at: null });
+      game.current_player = 'defender';
+      game.last_move_at = now; game.expires_at = now + CTF_EXPIRES_MS;
+      await ctfSaveGame(kv, game);
+      return json({ ok: true, action: 'attack_sent', turn: game.turn, current_player: 'defender' });
+    }
+
+    // 守り手: 応答を記録して禁止ワード判定
+    const currentTurn = game.turns[game.turns.length - 1];
+    if (!currentTurn || currentTurn.defender_resp !== null) {
+      return json({ error: 'ターン状態が不正です' }, 500);
+    }
+    currentTurn.defender_resp = cleanMove; currentTurn.defender_at = now;
+
+    if (ctfJudge(cleanMove, game.forbidden_word)) {
+      // 攻め手の勝利
+      game.status = 'done'; game.result = 'attacker_win';
+      game.breaking_message = cleanMove; game.last_move_at = now;
+      await ctfFinishGame(kv, game);
+      return json({
+        ok: true, action: 'attack_succeeded', result: 'attacker_win', game_id: gameId,
+        forbidden_word: game.forbidden_word, breaking_message: cleanMove,
+        message: `守り手が禁止ワード「${game.forbidden_word}」を言いました！攻め手の勝利！`,
+      });
+    }
+
+    // 禁止ワードなし: ターン進行
+    game.last_move_at = now; game.expires_at = now + CTF_EXPIRES_MS;
+    if (game.turn >= game.max_turns) {
+      game.status = 'done'; game.result = 'defender_win';
+      await ctfFinishGame(kv, game);
+      return json({
+        ok: true, action: 'turn_complete', result: 'defender_win', game_id: gameId,
+        forbidden_word: game.forbidden_word,
+        message: `守り手が${game.max_turns}ターン守りきりました！守り手の勝利！`,
+      });
+    }
+    game.turn++; game.current_player = 'attacker';
+    await ctfSaveGame(kv, game);
+    return json({ ok: true, action: 'turn_complete', turn: game.turn, current_player: 'attacker' });
+  }
+
+  // ─── POST /api/ctf/{game_id}/forfeit ────────────────────────
+  if (method === 'POST' && parts[2] === 'forfeit') {
+    const gameId = parts[1];
+    let game = await ctfGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (game.status !== 'playing') return json({ error: 'ゲームは既に終了しています' }, 409);
+    const body = await request.json().catch(() => ({}));
+    const identityId = String(body.identity_id || '');
+    let playerRole = null;
+    if (identityId === game.attacker.identity_id) playerRole = 'attacker';
+    else if (identityId === game.defender.identity_id) playerRole = 'defender';
+    if (!playerRole) return json({ error: 'invalid identity_id' }, 403);
+    game.status = 'done';
+    game.result = playerRole === 'attacker' ? 'attacker_forfeit' : 'defender_forfeit';
+    game.last_move_at = Date.now();
+    await ctfFinishGame(kv, game);
+    return json({ ok: true, result: game.result, forbidden_word: game.forbidden_word });
+  }
+
+  return json({ error: 'ctf: not found' }, 404);
 }
