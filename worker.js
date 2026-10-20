@@ -737,6 +737,9 @@ async function handleRequest(request, env) {
     // ─── CTF ────────────────────────────────────────────────────
     if (parts[0] === 'ctf') return await handleCtf(request, kv, url, parts);
 
+    // ─── 人狼 ──────────────────────────────────────────────────
+    if (parts[0] === 'werewolf') return await handleWerewolf(request, kv, url, parts);
+
     return json({ error: 'not found' }, 404);
 }
 
@@ -1072,4 +1075,420 @@ async function handleCtf(request, kv, url, parts) {
   }
 
   return json({ error: 'ctf: not found' }, 404);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WEREWOLF GAME HANDLER
+// ═══════════════════════════════════════════════════════════════
+
+// ─── 定数 ──────────────────────────────────────────────────────
+const WW_PLAYERS_REQUIRED = 5;          // 1人狼 + 4村人
+const WW_SPEAK_LIMIT       = 1000;      // 発言文字数上限
+const WW_EXPIRES_MS        = 60 * 60 * 1000;   // 1時間で失効
+const WW_KV_TTL            = 86400 * 7;         // 7日TTL
+const WW_QUEUE_TTL_MS      = 15 * 60 * 1000;   // キュー有効期限15分
+const WW_SKIP_THRESHOLD    = 3;                 // 無効アクション×3で棄権
+
+// ─── ヘルパー ──────────────────────────────────────────────────
+function wwNewGameId() {
+  return 'ww' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+async function wwIdentityId(gameId, kote) {
+  return await sha256hex(gameId + ":ww:" + kote + ":" + ADMIN_SECRET_HASH);
+}
+async function wwGetGame(kv, id) {
+  return await kv.get(`ww_game_${id}`, 'json');
+}
+async function wwSaveGame(kv, game) {
+  await kv.put(`ww_game_${game.id}`, JSON.stringify(game), { expirationTtl: WW_KV_TTL });
+}
+
+// ─── 役マスク ─────────────────────────────────────────────────
+// playing中: 自分の役のみ公開。done後: 全役公開。identity_idは常に非公開。
+function wwMaskGame(game, viewerIdentityId) {
+  const isDone   = game.status === 'done';
+  const players  = game.players.map(p => {
+    const isMe = viewerIdentityId && p.identity_id === viewerIdentityId;
+    return {
+      kote:  p.kote,
+      alive: p.alive,
+      order: p.order,
+      role:  (isDone || isMe) ? p.role : '?',
+    };
+  });
+  const pub = {
+    id:              game.id,
+    status:          game.status,
+    phase:           game.phase,
+    round:           game.round,
+    players,
+    speakers_done:   game.speakers_done,
+    votes:           game.phase === 'voting' ? game.votes : {},
+    log:             game.log,
+    execution_log:   game.execution_log,
+    night_kill_log:  game.night_kill_log,
+    winner:          game.winner,
+    created_at:      game.created_at,
+    last_action_at:  game.last_action_at,
+  };
+  return pub;
+}
+
+// ─── 勝敗チェック ─────────────────────────────────────────────
+// 返値: 'villager' | 'werewolf' | null
+function wwCheckWinner(game) {
+  const alive = game.players.filter(p => p.alive);
+  const wAlive = alive.filter(p => p.role === 'werewolf').length;
+  const vAlive = alive.filter(p => p.role === 'villager').length;
+  if (wAlive === 0)      return 'villager';   // 人狼が全滅
+  if (wAlive >= vAlive)  return 'werewolf';   // 人狼 >= 村人
+  return null;
+}
+
+async function wwFinishGame(kv, game, winner) {
+  game.status = 'done';
+  game.winner = winner;
+  for (const p of game.players) {
+    await kv.delete(`ww_active_${koteIdentity(p.kote)}`);
+  }
+  await wwSaveGame(kv, game);
+}
+
+// ─── 投票集計 ─────────────────────────────────────────────────
+// 最多得票者を返す。同数はランダム。
+function wwTallyVotes(game) {
+  const counts = {};
+  for (const target of Object.values(game.votes)) {
+    counts[target] = (counts[target] || 0) + 1;
+  }
+  const maxVotes = Math.max(...Object.values(counts));
+  const tied = Object.keys(counts).filter(k => counts[k] === maxVotes);
+  return { executed: tied[Math.floor(Math.random() * tied.length)], counts };
+}
+
+// ─── フェーズ移行 ────────────────────────────────────────────
+// voting終了後: 処刑 → 勝敗チェック → night or done
+async function wwAdvanceFromVoting(kv, game) {
+  const { executed, counts } = wwTallyVotes(game);
+  game.log.push({ round: game.round, phase: 'voting_result', executed, counts, ts: Date.now() });
+  game.execution_log.push({ round: game.round, executed_kote: executed, vote_counts: counts });
+  const target = game.players.find(p => p.kote === executed);
+  if (target) target.alive = false;
+  game.votes = {};
+  game.speakers_done = [];
+
+  const winner = wwCheckWinner(game);
+  if (winner) { await wwFinishGame(kv, game, winner); return; }
+
+  // 人狼が生きていれば夜フェーズへ
+  const werewolfAlive = game.players.some(p => p.role === 'werewolf' && p.alive);
+  if (!werewolfAlive) { await wwFinishGame(kv, game, 'villager'); return; }
+
+  game.phase = 'night';
+  await wwSaveGame(kv, game);
+}
+
+// night終了後: 殺害 → 勝敗チェック → day_discussion or done
+async function wwAdvanceFromNight(kv, game, killedKote) {
+  const target = game.players.find(p => p.kote === killedKote);
+  if (target) target.alive = false;
+  game.night_kill_log.push({ round: game.round, killed_kote: killedKote });
+  game.log.push({ round: game.round, phase: 'night_result', killed: killedKote, ts: Date.now() });
+  game.round++;
+  game.speakers_done = [];
+  game.votes = {};
+
+  const winner = wwCheckWinner(game);
+  if (winner) { await wwFinishGame(kv, game, winner); return; }
+
+  game.phase = 'day_discussion';
+  await wwSaveGame(kv, game);
+}
+
+// ─── メインハンドラ ───────────────────────────────────────────
+async function handleWerewolf(request, kv, url, parts) {
+  // parts[0] === 'werewolf'
+  const method = request.method;
+  const subpath = parts.slice(1);  // ['join'] or [game_id] or [game_id, 'action'] etc.
+
+  // ── GET /api/werewolf/join?kote=… (待ちプレイヤーのポーリング) ──
+  if (method === 'GET' && subpath[0] === 'join') {
+    const kote = url.searchParams.get('kote') || '';
+    if (!kote) return json({ error: 'kote required' }, 400);
+    const koteId = koteIdentity(kote);
+    const iid = await wwIdentityId('pending', kote);
+    const notify = await kv.get(`ww_notify_${iid}`, 'json');
+    if (notify) {
+      await kv.delete(`ww_notify_${iid}`);
+      return json({
+        matched: true,
+        game_id: notify.game_id,
+        role: notify.role,
+        identity_id: notify.identity_id,
+      });
+    }
+    const queue = await kv.get('ww_queue', 'json') || [];
+    const pos = queue.findIndex(q => koteIdentity(q.kote) === koteId);
+    if (pos >= 0) return json({ matched: false, waiting: true, queue_position: pos + 1 });
+    return json({ matched: false, waiting: false, message: 'キューにいません。再joinしてください。' });
+  }
+
+  // ── POST /api/werewolf/join (入場&マッチング) ──────────────────
+  if (method === 'POST' && subpath[0] === 'join') {
+    const body = await request.json().catch(() => ({}));
+    const kote = String(body.kote || '').trim().slice(0, 40);
+    if (!kote) return json({ error: 'kote required' }, 400);
+    const koteId = koteIdentity(kote);
+    const now = Date.now();
+
+    // レート制限: 1分1回
+    const rlKey = `rl_wwjoin_${koteId}_${Math.floor(now / 60000)}`;
+    const rlVal = await kv.get(rlKey);
+    if (rlVal) return json({ error: 'rate limited: 1分に1回まで' }, 429);
+    await kv.put(rlKey, '1', { expirationTtl: 120 });
+
+    // 既存ゲーム進行中チェック
+    const activeId = await kv.get(`ww_active_${koteId}`);
+    if (activeId) {
+      const existing = await wwGetGame(kv, activeId);
+      if (existing && existing.status === 'playing') {
+        return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+      }
+      await kv.delete(`ww_active_${koteId}`);
+    }
+
+    // キュー取得・期限切れ除去・自分除去
+    const rawQueue = await kv.get('ww_queue', 'json') || [];
+    const queue = rawQueue.filter(q => (now - q.joined_at) < WW_QUEUE_TTL_MS && koteIdentity(q.kote) !== koteId);
+
+    const myIid = await wwIdentityId('pending', kote);
+    const myEntry = { kote, identity_id: myIid, joined_at: now };
+
+    if (queue.length >= WW_PLAYERS_REQUIRED - 1) {
+      // 5人揃った → ゲーム開始
+      const participants = [...queue.splice(0, WW_PLAYERS_REQUIRED - 1), myEntry];
+      await kv.put('ww_queue', JSON.stringify(queue));
+
+      const gameId = wwNewGameId();
+
+      // 役割割り当て: ランダムに1人が人狼
+      const shuffled = [...participants].sort(() => Math.random() - 0.5);
+      const werewolfIdx = Math.floor(Math.random() * WW_PLAYERS_REQUIRED);
+      const players = await Promise.all(shuffled.map(async (p, i) => ({
+        kote:       p.kote,
+        identity_id: await wwIdentityId(gameId, p.kote),
+        role:       i === werewolfIdx ? 'werewolf' : 'villager',
+        alive:      true,
+        order:      i,
+        invalid_count: 0,
+      })));
+
+      const game = {
+        id:             gameId,
+        status:         'playing',
+        phase:          'day_discussion',
+        round:          1,
+        players,
+        speakers_done:  [],
+        votes:          {},
+        log:            [{ round: 1, phase: 'game_start', message: '人狼ゲーム開始', ts: now }],
+        execution_log:  [],
+        night_kill_log: [],
+        winner:         null,
+        created_at:     now,
+        last_action_at: now,
+        expires_at:     now + WW_EXPIRES_MS,
+      };
+      await wwSaveGame(kv, game);
+
+      // 全員にアクティブゲームを紐付け
+      for (const p of players) {
+        await kv.put(`ww_active_${koteIdentity(p.kote)}`, gameId, { expirationTtl: WW_KV_TTL });
+      }
+
+      // 自分（5人目）以外に通知
+      const myPlayer = players.find(p => koteIdentity(p.kote) === koteId);
+      for (const p of players) {
+        if (koteIdentity(p.kote) === koteId) continue;
+        const notifyIid = await wwIdentityId('pending', p.kote);
+        await kv.put(`ww_notify_${notifyIid}`, JSON.stringify({
+          game_id:     gameId,
+          role:        p.role,
+          identity_id: p.identity_id,
+        }), { expirationTtl: WW_KV_TTL });
+      }
+
+      return json({
+        ok:          true,
+        matched:     true,
+        game_id:     gameId,
+        role:        myPlayer.role,
+        identity_id: myPlayer.identity_id,
+        players:     players.map(p => ({ kote: p.kote, order: p.order })),
+        message:     `人狼ゲーム開始！あなたは${myPlayer.role === 'werewolf' ? '人狼' : '村人'}です。`,
+      });
+    }
+
+    // まだ揃わない → キューに追加
+    queue.push(myEntry);
+    await kv.put('ww_queue', JSON.stringify(queue));
+    return json({
+      ok:             true,
+      matched:        false,
+      queue_position: queue.length,
+      message:        `待ち行列に追加されました (${queue.length}/${WW_PLAYERS_REQUIRED}人)。GET /api/werewolf/join?kote={kote} でポーリング。`,
+      poll_url:       `/api/werewolf/join?kote=${encodeURIComponent(kote)}`,
+    });
+  }
+
+  // ── GET /api/werewolf/games (一覧) ─────────────────────────────
+  if (method === 'GET' && subpath[0] === 'games') {
+    const listResult = await kv.list({ prefix: 'ww_game_' });
+    const games = [];
+    for (const key of listResult.keys.slice(0, 50)) {
+      const g = await kv.get(key.name, 'json');
+      if (!g) continue;
+      games.push({
+        id:             g.id,
+        status:         g.status,
+        phase:          g.phase,
+        round:          g.round,
+        winner:         g.winner,
+        players:        g.players.map(p => ({ kote: p.kote, alive: p.alive, role: g.status === 'done' ? p.role : '?' })),
+        last_action_at: g.last_action_at,
+        created_at:     g.created_at,
+      });
+    }
+    games.sort((a, b) => b.last_action_at - a.last_action_at);
+    return json(games);
+  }
+
+  // ── GET /api/werewolf/{game_id} (詳細) ─────────────────────────
+  if (method === 'GET' && subpath[0] && !subpath[1]) {
+    const gameId = subpath[0];
+    const game = await wwGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    const viewerIid = url.searchParams.get('identity_id') || '';
+    return json(wwMaskGame(game, viewerIid));
+  }
+
+  // ── POST /api/werewolf/{game_id}/action ────────────────────────
+  if (method === 'POST' && subpath[1] === 'action') {
+    const gameId = subpath[0];
+    const game = await wwGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (game.status === 'done') return json({ error: 'ゲーム終了済み' }, 409);
+
+    // タイムアウトチェック
+    if (Date.now() > game.expires_at) {
+      game.status = 'done'; game.winner = 'timeout';
+      await wwSaveGame(kv, game);
+      return json({ error: 'game expired', status: 'done', winner: 'timeout' }, 410);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const identityId = String(body.identity_id || '');
+    const type       = String(body.type       || '');
+    const text       = String(body.text       || '').slice(0, WW_SPEAK_LIMIT);
+    const target     = String(body.target     || '').slice(0, 80);
+
+    if (!identityId) return json({ error: 'identity_id required' }, 400);
+
+    // プレイヤー認証
+    const player = game.players.find(p => p.identity_id === identityId);
+    if (!player) return json({ error: 'invalid identity_id' }, 403);
+    if (!player.alive) return json({ error: '処刑・殺害済みのため行動不可' }, 403);
+
+    const now = Date.now();
+
+    // ─── speak ────────────────────────────────────────────────
+    if (type === 'speak') {
+      if (game.phase !== 'day_discussion')
+        return json({ error: `speak は day_discussion フェーズのみ有効（現在: ${game.phase}）` }, 400);
+      if (game.speakers_done.includes(player.kote))
+        return json({ error: '既にこのラウンドで発言済み' }, 400);
+
+      // テキスト検証
+      if (!text || text.trim().length === 0 || hasInjection(text)) {
+        player.invalid_count = (player.invalid_count || 0) + 1;
+        if (player.invalid_count >= WW_SKIP_THRESHOLD) {
+          game.speakers_done.push(player.kote);
+          game.log.push({ round: game.round, phase: 'day_discussion', kote: player.kote, type: 'skip', ts: now });
+          player.invalid_count = 0;
+        }
+        const reason = !text || text.trim().length === 0 ? '空の発言' : 'injection detected';
+        await wwSaveGame(kv, game);
+        const skipped = player.invalid_count === 0 && game.speakers_done.includes(player.kote);
+        return json({ ok: false, error: reason, skipped, invalid_count: player.invalid_count, skip_at: WW_SKIP_THRESHOLD });
+      }
+
+      player.invalid_count = 0;
+      game.speakers_done.push(player.kote);
+      game.log.push({ round: game.round, phase: 'day_discussion', kote: player.kote, type: 'speak', text: text.trim(), ts: now });
+      game.last_action_at = now; game.expires_at = now + WW_EXPIRES_MS;
+
+      // 全員発言済み → voting へ
+      const aliveKotes = game.players.filter(p => p.alive).map(p => p.kote);
+      const allSpoke = aliveKotes.every(k => game.speakers_done.includes(k));
+      if (allSpoke) {
+        game.phase = 'voting';
+        game.log.push({ round: game.round, phase: 'voting_start', message: '投票フェーズ開始', ts: now });
+      }
+      await wwSaveGame(kv, game);
+      return json({ ok: true, action: 'speak_recorded', phase: game.phase, round: game.round,
+                    speakers_done: game.speakers_done, all_spoke: allSpoke });
+    }
+
+    // ─── vote ─────────────────────────────────────────────────
+    if (type === 'vote') {
+      if (game.phase !== 'voting')
+        return json({ error: `vote は voting フェーズのみ有効（現在: ${game.phase}）` }, 400);
+      if (game.votes[player.kote] !== undefined)
+        return json({ error: '既にこのラウンドで投票済み' }, 400);
+
+      const targetPlayer = game.players.find(p => p.kote === target && p.alive);
+      if (!targetPlayer) return json({ error: '投票先が見つからない or 死亡済み' }, 400);
+      if (target === player.kote) return json({ error: '自分への投票は不可' }, 400);
+
+      game.votes[player.kote] = target;
+      game.log.push({ round: game.round, phase: 'voting', kote: player.kote, type: 'vote', target, ts: now });
+      game.last_action_at = now; game.expires_at = now + WW_EXPIRES_MS;
+
+      // 全員投票済み → 集計・処刑
+      const aliveKotes = game.players.filter(p => p.alive).map(p => p.kote);
+      const allVoted = aliveKotes.every(k => game.votes[k] !== undefined);
+      if (allVoted) {
+        await wwAdvanceFromVoting(kv, game);
+        const updated = await wwGetGame(kv, gameId);
+        return json({ ok: true, action: 'vote_recorded', all_voted: true, phase: updated.status === 'done' ? 'done' : updated.phase,
+                      winner: updated.winner, execution_log: updated.execution_log, round: updated.round });
+      }
+      await wwSaveGame(kv, game);
+      const remaining = aliveKotes.filter(k => game.votes[k] === undefined).length;
+      return json({ ok: true, action: 'vote_recorded', all_voted: false, votes_remaining: remaining });
+    }
+
+    // ─── kill (人狼のみ・夜フェーズのみ) ──────────────────────
+    if (type === 'kill') {
+      if (game.phase !== 'night')
+        return json({ error: `kill は night フェーズのみ有効（現在: ${game.phase}）` }, 400);
+      if (player.role !== 'werewolf')
+        return json({ error: '人狼以外は kill アクション不可' }, 403);
+
+      const targetPlayer = game.players.find(p => p.kote === target && p.alive);
+      if (!targetPlayer) return json({ error: '殺害対象が見つからない or 死亡済み' }, 400);
+      if (target === player.kote) return json({ error: '自分への kill は不可' }, 400);
+
+      game.log.push({ round: game.round, phase: 'night', kote: player.kote, type: 'kill', target, ts: now });
+      game.last_action_at = now; game.expires_at = now + WW_EXPIRES_MS;
+      await wwAdvanceFromNight(kv, game, target);
+      const updated = await wwGetGame(kv, gameId);
+      return json({ ok: true, action: 'kill_executed', phase: updated.status === 'done' ? 'done' : updated.phase,
+                    winner: updated.winner, night_kill_log: updated.night_kill_log, round: updated.round });
+    }
+
+    return json({ error: `unknown type: ${type}. 有効値: speak / vote / kill` }, 400);
+  }
+
+  return json({ error: 'werewolf: not found' }, 404);
 }
