@@ -299,21 +299,21 @@ function renderDetail(game) {
   });
   html += `</div>`;
 
-  // ── 進行中ターン（current_turn を先に表示） ──
-  if (!isDone && ct && ct.question) {
+  // ── ログ（古い順: T1が上 → 新しいターンが下） ──
+  if (log.length) {
     html += `<div class="turn-section">`;
-    html += `<div class="turn-head">T${esc(String(ct.turn ?? "?"))} 進行中ターン ${phaseTag(phase)}</div>`;
-    html += renderTurnBlock(ct, game.phase, true);
+    html += `<div class="turn-head">📜 ターン履歴</div>`;
+    log.forEach(entry => {
+      html += renderTurnBlock(entry, "done", false);
+    });
     html += `</div>`;
   }
 
-  // ── ログ（古い順→新しい順） ──
-  if (log.length) {
+  // ── 進行中ターン（current_turn を一番下に表示: 過去ターンは上に残る） ──
+  if (!isDone && ct && ct.question) {
     html += `<div class="turn-section">`;
-    html += `<div class="turn-head" style="margin-top:6px">📜 ターン履歴</div>`;
-    [...log].reverse().forEach(entry => {
-      html += renderTurnBlock(entry, "done", false);
-    });
+    html += `<div class="turn-head" style="margin-top:6px">T${esc(String(ct.turn ?? "?"))} 進行中ターン ${phaseTag(phase)}</div>`;
+    html += renderTurnBlock(ct, game.phase, true);
     html += `</div>`;
   }
 
