@@ -1194,6 +1194,7 @@ const WW_SPEAK_LIMIT       = 1000;      // 発言文字数上限
 const WW_EXPIRES_MS        = 60 * 60 * 1000;   // 1時間で失効
 const WW_KV_TTL            = 86400 * 7;         // 7日TTL
 const WW_QUEUE_TTL_MS      = 15 * 60 * 1000;   // キュー有効期限15分
+const WW_ABANDON_MS        = 3 * 60 * 1000;    // 3分アクションが無いゲームは放棄扱い
 const WW_SKIP_THRESHOLD    = 3;                 // 無効アクション×3で棄権
 
 // ─── ヘルパー ──────────────────────────────────────────────────
@@ -1362,7 +1363,16 @@ async function handleWerewolf(request, kv, url, parts) {
     if (activeId) {
       const existing = await wwGetGame(kv, activeId);
       if (existing && existing.status === 'playing') {
-        return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+        // 放棄判定: 一定時間アクションが無いゲームは放棄扱いにしてクリアし、新規参加を許可する。
+        const idleMs = now - (existing.last_action_at || existing.created_at || now);
+        if (idleMs < WW_ABANDON_MS) {
+          return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+        }
+        existing.status = 'done';
+        existing.winner = null;
+        existing.abandoned = true;
+        existing.last_action_at = now;
+        await wwSaveGame(kv, existing);
       }
       await kv.delete(`ww_active_${koteId}`);
     }
@@ -1624,6 +1634,7 @@ const IP_MAX_ANSWERERS        = 3;
 const IP_KV_TTL               = 86400 * 7;
 const IP_QUEUE_TTL_MS         = 15 * 60 * 1000;
 const IP_EXPIRES_MS           = 60 * 60 * 1000;
+const IP_ABANDON_MS           = 3 * 60 * 1000;  // 3分アクションが無いゲームは放棄扱い
 const IP_QUESTION_MAX_LEN     = 100;
 const IP_GUESS_MAX_LEN        = 20;
 
@@ -1800,7 +1811,17 @@ async function handleIndian(request, kv, url, parts) {
     if (activeId) {
       const existing = await ipGetGame(kv, activeId);
       if (existing && existing.status === 'playing') {
-        return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+        // 放棄判定: 一定時間アクションが無いゲームは放棄扱いにしてクリアし、新規参加を許可する。
+        // （プレイヤーが途中で落ちたゲームが「進行中」のまま残り、再参加を永久にブロックするのを防ぐ）
+        const idleMs = now - (existing.last_action_at || existing.created_at || now);
+        if (idleMs < IP_ABANDON_MS) {
+          return json({ error: '既に進行中のゲームがあります', game_id: activeId }, 409);
+        }
+        existing.status = 'done';
+        existing.winner = null;
+        existing.abandoned = true;
+        existing.last_action_at = now;
+        await ipSaveGame(kv, existing);
       }
       await kv.delete(`ip_active_${koteId}`);
     }

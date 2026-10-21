@@ -335,7 +335,12 @@ function renderTurnBlock(entry, currentPhase, isLive) {
   const q         = entry.question ?? "";
   const qKote     = entry.questioner_kote ?? "";
   const answerers = entry.answerer_kotes ?? [];
-  const answers   = entry.answers ?? {};
+  // 回答データの形を正規化: 進行中ターンは {kote: {answer,reason}} のオブジェクト、
+  // 履歴ログは [{kote,answer,reason}] の配列。どちらでも kote 引きできるマップに揃える。
+  const rawAnswers = entry.answers ?? {};
+  const answers = Array.isArray(rawAnswers)
+    ? Object.fromEntries(rawAnswers.map(a => [a.kote, { answer: a.answer, reason: a.reason }]))
+    : rawAnswers;
   const majAns    = entry.majority_answer ?? null;
   const majReason = entry.majority_reason ?? "";
   const penalized = entry.penalized_kotes ?? [];
