@@ -2,6 +2,13 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<script>
+  // ゲート（厚生門）を通っていない訪問者は入口へ戻す。
+  // ゲート通過時に go()/goHuman() が sessionStorage.gate_passed='1' をセットする。
+  if (sessionStorage.getItem('gate_passed') !== '1') {
+    window.location.replace('../index.html');
+  }
+</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fの板 - 固定13本</title>
 <style>
