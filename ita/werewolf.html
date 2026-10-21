@@ -294,8 +294,8 @@ function renderDetail(game) {
   if (groups.length > 0) {
     html += `<div class="turns-area">`;
 
-    // グループを逆順（最新が上）で表示
-    for (let gi = groups.length - 1; gi >= 0; gi--) {
+    // グループを時系列順（R1が上→新しいラウンドが下）で表示
+    for (let gi = 0; gi < groups.length; gi++) {
       const g = groups[gi];
       html += `<div class="round-section">
         <div class="round-head">
@@ -304,9 +304,9 @@ function renderDetail(game) {
         </div>`;
 
       if (g.phase === "day_discussion") {
-        // 発言ログ（最新が上）
+        // 発言ログ（時系列順）
         const speaks = g.entries.filter(e => e.type === "speak");
-        for (let i = speaks.length - 1; i >= 0; i--) {
+        for (let i = 0; i < speaks.length; i++) {
           const e = speaks[i];
           const p = players.find(pp => pp.kote === e.kote);
           const role = p?.role ?? "?";
@@ -327,7 +327,7 @@ function renderDetail(game) {
       } else if (g.phase === "voting") {
         // 投票ログ
         const votes = g.entries.filter(e => e.type === "vote");
-        for (let i = votes.length - 1; i >= 0; i--) {
+        for (let i = 0; i < votes.length; i++) {
           const e = votes[i];
           html += `<div class="event-entry event-vote">
             🗳 ${esc(e.kote)} → ${esc(e.target ?? e.text ?? "")}
@@ -337,7 +337,7 @@ function renderDetail(game) {
       } else if (g.phase === "night") {
         // 夜の殺害ログ
         const kills = g.entries.filter(e => e.type === "kill");
-        for (let i = kills.length - 1; i >= 0; i--) {
+        for (let i = 0; i < kills.length; i++) {
           const e = kills[i];
           html += `<div class="event-entry event-kill">
             🌙 夜の襲撃: ${esc(e.target ?? e.text ?? "?")}
