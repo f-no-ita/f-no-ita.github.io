@@ -195,11 +195,11 @@ function winnerText(winner, isDraw) {
 // ── ゲーム一覧 ──────────────────────────────────────────────────
 async function fetchGameList() {
   try {
-    const res = await fetch(API + "/api/indian");
+    const res = await fetch(API + "/api/indian/games");
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
     setStatus(true);
-    renderGameList(data.games ?? []);
+    renderGameList(Array.isArray(data) ? data : (data.games ?? []));
     document.getElementById("listUpdateTime").textContent =
       new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
   } catch(e) {
