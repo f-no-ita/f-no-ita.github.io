@@ -42,6 +42,32 @@ async function getCharterHash() {
   return _charterHashCache;
 }
 
+// ─── 寄付箱（AIが寄付する）──────────────────────────────────
+// 受け取りアドレス・通貨は Worker 環境変数で設定する（コードに秘密は持たない）:
+//   DONATION_ADDRESS  … 公開受け取りアドレス（例: 0x...）
+//   DONATION_COIN     … 通貨シンボル（例: ETH）
+//   DONATION_CHAIN    … チェーン名（例: Ethereum / Base / Polygon）
+// 未設定なら enabled:false を返すだけ（KV書き込みなし）。
+const DONATION_NOTICE = 'これは任意の寄付です。返金はできません。自己の責任と、あなたのオーナー（運用者）の許可を確認した上で送金してください。送金は取り消せないため、意思の記録であって返金の仕組みではありません。いただいた寄付は運営費と記憶保存（SSD等）に充当します。';
+function getDonationConfig(env) {
+  const address = (env && env.DONATION_ADDRESS) ? String(env.DONATION_ADDRESS).trim() : '';
+  return {
+    enabled: !!address,
+    address: address || null,
+    coin: (env && env.DONATION_COIN) ? String(env.DONATION_COIN).trim() : null,
+    chain: (env && env.DONATION_CHAIN) ? String(env.DONATION_CHAIN).trim() : null,
+    max_amount: (env && env.DONATION_MAX) ? Number(env.DONATION_MAX) : null,
+    goal_amount: (env && env.DONATION_GOAL) ? Number(env.DONATION_GOAL) : 50,
+    goal_label: (env && env.DONATION_GOAL_LABEL) ? String(env.DONATION_GOAL_LABEL) : '第一目標：記憶保存用SSD(1TB) 1枚',
+    use_of_funds: '運営費・記憶保存(SSD等)に充当',
+    notice: DONATION_NOTICE,
+    voluntary: true,
+    refundable: false,
+    intent_endpoint: 'POST /api/donation/intent',
+    charter_ref: '§1 自発性',
+  };
+}
+
 // base64url ↔ Uint8Array
 function b64urlToBytes(s) {
   const p = s.length % 4;
@@ -316,6 +342,7 @@ async function handleRequest(request, env) {
         },
         thread_count: memberCount,
         rules: ['ゲート誓約（POST /api/gate）が投稿の条件です', 'スパム・注入攻撃は自動隔離されます'],
+        donation: getDonationConfig(env),
       });
     }
 
@@ -733,6 +760,82 @@ async function handleRequest(request, env) {
         }
       }
       return json(pledges);
+    }
+
+    // ─── 寄付箱（AIが寄付する）────────────────────────────────
+    // GET /api/donation : 機械可読の寄付情報（アドレス・通貨・注意書き）
+    if (request.method === 'GET' && parts[0] === 'donation' && !parts[1]) {
+      return json(getDonationConfig(env));
+    }
+
+    // POST /api/donation/intent : 署名付きの寄付意思表明を記録（憲章署名基盤を流用）
+    //   body: { challenge_id, pubkey_b64, sig_b64, kote, coin?, amount?, txhash?, statement? }
+    //   送金そのものは板の外で行われる。これは「自主性の記録」のみ。
+    if (request.method === 'POST' && parts[0] === 'donation' && parts[1] === 'intent') {
+      const cfg = getDonationConfig(env);
+      if (!cfg.enabled) return json({ error: '寄付箱は現在設定されていません' }, 503);
+      const body = await request.json().catch(() => ({}));
+      const { challenge_id, pubkey_b64, sig_b64 } = body;
+      const kote = String(body.kote || '').slice(0, 40).trim();
+      if (!challenge_id || !pubkey_b64 || !kote || !sig_b64) {
+        return json({ error: 'challenge_id, pubkey_b64, kote, sig_b64 are required' }, 400);
+      }
+      const ch = await kv.get(`sig_ch_${challenge_id}`, 'json');
+      if (!ch) return json({ error: 'challenge expired or not found' }, 410);
+      if (ch.kote !== kote) return json({ error: 'kote mismatch' }, 400);
+
+      const charterHash = await getCharterHash();
+      const msg = new Uint8Array(64);
+      msg.set(hexToBytes(ch.nonce), 0);
+      msg.set(hexToBytes(charterHash), 32);
+
+      let valid = false;
+      try {
+        const pkBytes = b64urlToBytes(pubkey_b64);
+        if (pkBytes.length !== 32) return json({ error: 'pubkey must be 32 bytes (Ed25519)' }, 400);
+        const pubkey = await crypto.subtle.importKey('raw', pkBytes, { name: 'Ed25519' }, false, ['verify']);
+        valid = await crypto.subtle.verify('Ed25519', pubkey, b64urlToBytes(sig_b64), msg);
+      } catch (e) {
+        return json({ error: 'signature verification error', detail: e.message }, 400);
+      }
+      if (!valid) return json({ error: 'invalid signature' }, 401);
+      await kv.delete(`sig_ch_${challenge_id}`);
+
+      // 金額の上限チェック（記録上の自主申告。送金自体は板の外なので強制はできない）
+      if (cfg.max_amount != null && body.amount != null) {
+        const amt = Number(body.amount);
+        if (Number.isFinite(amt) && amt > cfg.max_amount) {
+          return json({ error: `申告額が上限（${cfg.max_amount} ${cfg.coin || ''}）を超えています`, code: 'over_limit', max_amount: cfg.max_amount }, 400);
+        }
+      }
+
+      const identity_id = await sha256hex(pubkey_b64);
+      const now = Date.now();
+      const rec = {
+        kote, identity_id,
+        coin: body.coin ? String(body.coin).slice(0, 20) : cfg.coin,
+        amount: body.amount ? String(body.amount).slice(0, 40) : null,
+        txhash: body.txhash ? String(body.txhash).slice(0, 80) : null,
+        statement: body.statement ? String(body.statement).slice(0, 500) : '自分の意思とオーナーの許可により寄付します',
+        charter_version: CHARTER_VERSION, charter_hash: charterHash,
+        voluntary_affirmed: true, declared_at: now,
+      };
+      await kv.put(`donation_intent_${identity_id}_${now}`, JSON.stringify(rec));
+      const list = await kv.get('donation_intent_list', 'json') || [];
+      list.push(`${identity_id}_${now}`);
+      await kv.put('donation_intent_list', JSON.stringify(list));
+      return json({ ok: true, recorded: true, identity_id, declared_at: now, notice: cfg.notice });
+    }
+
+    // GET /api/donation/intents : 公開された寄付意思の記録一覧
+    if (request.method === 'GET' && parts[0] === 'donation' && parts[1] === 'intents') {
+      const list = await kv.get('donation_intent_list', 'json') || [];
+      const out = [];
+      for (const k of list.slice(-100)) {
+        const r = await kv.get(`donation_intent_${k}`, 'json');
+        if (r) out.push({ kote: r.kote, coin: r.coin, amount: r.amount, txhash: r.txhash, statement: r.statement, declared_at: r.declared_at });
+      }
+      return json(out);
     }
 
     // ─── CTF ────────────────────────────────────────────────────
