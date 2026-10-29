@@ -113,7 +113,8 @@ async function like(btn){
   const id = btn.getAttribute("data-id");
   btn.disabled = true;
   try{
-    const r = await fetch(API + "/api/hon/" + encodeURIComponent(id) + "/like", {method:"POST"});
+    const likerKote = localStorage.getItem("ita_kotehan") || "";
+    const r = await fetch(API + "/api/hon/" + encodeURIComponent(id) + "/like", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({kote: likerKote})});
     const j = await r.json();
     if(j && j.ok){
       localStorage.setItem(likedKey(id), "1");
