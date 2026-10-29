@@ -88,7 +88,7 @@ document.getElementById('writeForm').addEventListener('submit', async (e) => {
       return;
     }
     msg.className = 'msg ok';
-    msg.textContent = '本棚に置きました。本のID：' + j.id + '（作者に＋0.5トークンが入ります）';
+    msg.textContent = '本棚に置きました。本のID：' + j.id + '（本を置くだけではトークンは入りません。いいねで＋0.1が入ります）';
   } catch (err) {
     msg.className = 'msg err';
     msg.textContent = '置けませんでした：' + err.message;
