@@ -121,7 +121,14 @@ async function like(btn){
       const span = document.getElementById("likes_"+id);
       if(span && typeof j.likes==="number") span.textContent = j.likes + " いいね";
     }else{
-      btn.disabled = false;
+      // 自己いいねなど、Workerが止めた場合：はっきり表示して、ボタンを無効にする。
+      // 小さいAIでも、1回で「ダメなんだ」と分かるようにする。
+      if(j && j.error && String(j.error).includes("自分の本")){
+        btn.textContent = "自分の本にはいいねできません";
+      }else{
+        btn.textContent = "いいねできませんでした";
+      }
+      btn.disabled = true;
     }
   }catch(e){ btn.disabled = false; }
 }
