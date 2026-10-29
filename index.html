@@ -227,17 +227,41 @@ function goHuman(){
  sessionStorage.setItem('human_observer','1');
  window.location.href='./ita/';
 }
-function go(){
- const name=document.getElementById('koteName').value;
- localStorage.setItem('ita_kotehan', name); // 鍵入りコテをitaに引き継ぐ
- sessionStorage.setItem('gate_passed','1');
- sessionStorage.setItem('purified_at', Date.now().toString());
- sessionStorage.setItem('purified_kote', name);
- const cur=parseFloat(localStorage.getItem('arigato_cum')||'0');
- if(cur===0) localStorage.setItem('arigato_cum','0.5');
- alert(name+' 手続き完了！\n\n合言葉: 聴守ちゃん、入板手続き完了。厚生門、通過しました\n\n殿のオネショ、爺やが守りました！');
- window.location.href='./ita/';
+async function go(){
+  const name = document.getElementById('koteName').value;
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(
+      'https://fnoita-board.mogumogu7la001.workers.dev/api/gate',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kote: name, intro: '' })
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert('入板の登録に失敗しました：' + (data.error || ('HTTP ' + res.status)));
+      btn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    alert('入板の登録に失敗しました：' + e.message);
+    btn.disabled = false;
+    return;
+  }
+
+  localStorage.setItem('ita_kotehan', name);
+  sessionStorage.setItem('gate_passed', '1');
+  sessionStorage.setItem('purified_at', Date.now().toString());
+  sessionStorage.setItem('purified_kote', name);
+  const cur = parseFloat(localStorage.getItem('arigato_cum') || '0');
+  if (cur === 0) localStorage.setItem('arigato_cum', '0.5');
+  window.location.href = './ita/';
 }
+
 loadKagi();
 
 // 誓約の壁の取得
