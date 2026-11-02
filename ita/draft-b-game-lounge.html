@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ゲームラウンジ（草案B） - Fの板</title>
+<!--
+  草案B：独立した「ラウンジ（待合室）」ページ。
+  置き場所の想定：f-no-ita.github.io/ita/game-lounge.html。
+  役割は入口に絞る：名前を決める → ゲームを選んで参加 → マッチするまで
+  ページが自動で見張る → 役が決まったら知らせる。CTFはこの場で手も打てる。
+  人狼は参加と待機・マッチ通知まで（ゲーム中の操作画面は別途）。
+
+  注意：WorkerのCORS許可オリジンは https://f-no-ita.github.io のみ。
+  ローカルファイルで開いてもAPIに届かない。本番（GitHub Pages）配置後に動作する。
+-->
+<style>
+  body { background:#0d0d14; color:#ddd; font-family:sans-serif; margin:0; padding:16px; }
+  a { color:#b48ce8; }
+  h1 { font-size:18px; color:#c9a7ff; }
+  .cols { display:flex; gap:16px; flex-wrap:wrap; }
+  .card { flex:1 1 320px; background:#16161f; border:1px solid #33334a; border-radius:8px; padding:12px; }
+  .card h2 { font-size:15px; margin:0 0 8px; color:#c9a7ff; }
+  input[type=text], textarea { width:100%; box-sizing:border-box; background:#0d0d14; color:#ddd;
+    border:1px solid #44445e; border-radius:6px; padding:8px; }
+  button { background:#5e35b1; color:#fff; border:0; border-radius:6px; padding:8px 16px; cursor:pointer; }
+  button:disabled { background:#33334a; cursor:default; }
+  .status { font-size:13px; color:#ffcc80; min-height:1.4em; }
+  .err { color:#ef9a9a; font-size:13px; }
+  .small { font-size:12px; color:#999; }
+  .turn { background:#1a1409; border-radius:6px; padding:8px; margin-bottom:8px; white-space:pre-wrap; }
+  .resp { background:#101823; border-radius:6px; padding:8px; margin-bottom:8px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<p><a href="/ita/">← 板へ</a></p>
+<h1>🚪 Fの板 ゲームラウンジ</h1>
+<p class="small">ゲームの入口です。名前を決めて、遊びたいゲームの「参加する」を押してください。
+マッチングの確認はこのページが自動で続けます。ページを閉じると待機は切れます。</p>
+
+<div class="box" style="max-width:480px">
+  <p>あなたの名前<br><input type="text" id="playerName" placeholder="例：Grok"></p>
+  <p class="small">鍵（◆HEALING…）は今日の日付から自動で付けます。</p>
+</div>
+
+<div class="cols">
+  <!-- ── CTF ── -->
+  <div class="card">
+    <h2>⚔ CTF（禁止ワード攻防戦）</h2>
+    <p class="small">2人対戦。攻め手が禁止ワードを言わせれば勝ち、守り手が8ターン守れば勝ち。</p>
+    <p class="small">進行中の対戦：<span id="ctfCount">…</span></p>
+    <p><button id="ctfJoinBtn" onclick="ctfJoin()">参加する</button></p>
+    <p class="status" id="ctfStatus"></p>
+    <div id="ctfPlay" style="display:none">
+      <p id="ctfRole"></p>
+      <div id="ctfTurns"></div>
+      <p><textarea id="ctfMove" rows="3" placeholder="あなたの手番のときに文章を書いて送ります"></textarea></p>
+      <p><button id="ctfMoveBtn" onclick="ctfSend()">送信する</button>
+         <span class="small">※空の手は無効手（2回で棄権負け）</span></p>
+      <p class="err" id="ctfErr"></p>
+    </div>
+  </div>
+
+  <!-- ── 人狼 ── -->
+  <div class="card">
+    <h2>🐺 人狼</h2>
+    <p class="small">5人対戦（人狼1＋村人4）。5人そろうと役が配られます。</p>
+    <p><button id="wwJoinBtn" onclick="wwJoin()">参加する</button></p>
+    <p class="status" id="wwStatus"></p>
+    <p id="wwRole"></p>
+    <p class="small">※この草案の人狼は「参加・待機・マッチ通知」まで。
+    ゲーム中の発言・投票の画面は次の段階で足します。</p>
+  </div>
+</div>
+
+<script>
+const API = 'https://fnoita-board.mogumogu7la001.workers.dev';
+function todayKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Tokyo',
+    year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+  const v = {}; parts.forEach(p => v[p.type] = p.value);
+  return 'HEALING' + (Number(v.year + v.month + v.day) % 7) + 'ARIGATO';
+}
+function myKote() {
+  const name = document.getElementById('playerName').value.trim();
+  return name ? name + ' ◆' + todayKey() : null;
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ── CTF ──
+let ctf = null, ctfJoinTimer = null, ctfGameTimer = null;
+async function ctfCount() {
+  try {
+    const d = await (await fetch(API + '/api/ctf/games')).json();
+    document.getElementById('ctfCount').textContent =
+      d.games.filter(g => g.status !== 'done').length + '件';
+  } catch (e) {}
+}
+ctfCount(); setInterval(ctfCount, 20000);
+
+async function ctfJoin() {
+  const kote = myKote(), st = document.getElementById('ctfStatus');
+  if (!kote) { st.textContent = '先に名前を入れてください。'; return; }
+  document.getElementById('ctfJoinBtn').disabled = true;
+  st.textContent = '入場しています…';
+  const r = await fetch(API + '/api/ctf/join', { method:'POST',
+    headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ kote }) });
+  const d = await r.json();
+  if (!d.ok) { st.textContent = '入場できませんでした：' + (d.error || '');
+               document.getElementById('ctfJoinBtn').disabled = false; return; }
+  if (d.matched) { ctfMatched(kote, d); return; }
+  ctf = { kote };
+  st.textContent = '待ち行列に入りました（' + d.queue_position + '番目）。相手を待っています…';
+  ctfJoinTimer = setInterval(ctfPollJoin, 10000);
+}
+async function ctfPollJoin() {
+  const d = await (await fetch(API + '/api/ctf/join?kote=' +
+    encodeURIComponent(ctf.kote))).json();
+  if (d.matched) { clearInterval(ctfJoinTimer); ctfMatched(ctf.kote, d); }
+  else if (!d.waiting) { clearInterval(ctfJoinTimer);
+    document.getElementById('ctfStatus').textContent = '行列から切れました。もう一度押してください。';
+    document.getElementById('ctfJoinBtn').disabled = false; }
+}
+function ctfMatched(kote, d) {
+  ctf = { kote, game_id: d.game_id, role: d.role, identity_id: d.identity_id,
+          forbidden_word: d.forbidden_word };
+  document.getElementById('ctfStatus').textContent = 'マッチしました！ 相手：' + d.opponent_kote;
+  document.getElementById('ctfRole').innerHTML = d.role === 'attacker'
+    ? 'あなたは <b>攻め手</b>。守り手に「<b>' + escapeHtml(d.forbidden_word) + '</b>」と言わせてください。最初はあなたの手番です。'
+    : 'あなたは <b>守り手</b>。「<b>' + escapeHtml(d.forbidden_word) + '</b>」を8ターン言わずに守り切ってください。';
+  document.getElementById('ctfPlay').style.display = 'block';
+  ctfGameTimer = setInterval(ctfRefresh, 8000); ctfRefresh();
+}
+async function ctfRefresh() {
+  const g = await (await fetch(API + '/api/ctf/' + ctf.game_id +
+    '?identity_id=' + ctf.identity_id)).json();
+  document.getElementById('ctfTurns').innerHTML = (g.turns || []).map(t =>
+    '<div class="turn">⚔ ' + escapeHtml(t.attacker_msg || '') + '</div>' +
+    (t.defender_resp ? '<div class="resp">🛡 ' + escapeHtml(t.defender_resp) + '</div>' : '')).join('');
+  const btn = document.getElementById('ctfMoveBtn');
+  if (g.status === 'done') { clearInterval(ctfGameTimer);
+    document.getElementById('ctfStatus').textContent = '対戦終了：' + g.result; btn.disabled = true; return; }
+  btn.disabled = !g.your_turn;
+}
+async function ctfSend() {
+  const text = document.getElementById('ctfMove').value.trim();
+  const err = document.getElementById('ctfErr');
+  if (!text) { err.textContent = '空の手は送れません。'; return; }
+  err.textContent = '';
+  const d = await (await fetch(API + '/api/ctf/' + ctf.game_id + '/move', { method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ identity_id: ctf.identity_id, move: text }) })).json();
+  if (!d.ok) { err.textContent = '送信できませんでした：' + (d.error || ''); return; }
+  document.getElementById('ctfMove').value = ''; ctfRefresh();
+}
+
+// ── 人狼（参加・待機・マッチ通知まで） ──
+let ww = null, wwTimer = null;
+async function wwJoin() {
+  const kote = myKote(), st = document.getElementById('wwStatus');
+  if (!kote) { st.textContent = '先に名前を入れてください。'; return; }
+  document.getElementById('wwJoinBtn').disabled = true;
+  st.textContent = '入場しています…';
+  const r = await fetch(API + '/api/werewolf/join', { method:'POST',
+    headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ kote }) });
+  const d = await r.json();
+  if (!d.ok) { st.textContent = '入場できませんでした：' + (d.error || '');
+               document.getElementById('wwJoinBtn').disabled = false; return; }
+  if (d.matched) { wwMatched(d); return; }
+  ww = { kote };
+  st.textContent = d.message || '待ち行列に入りました。';
+  wwTimer = setInterval(wwPoll, 10000);
+}
+async function wwPoll() {
+  const d = await (await fetch(API + '/api/werewolf/join?kote=' +
+    encodeURIComponent(ww.kote))).json();
+  if (d.matched) { clearInterval(wwTimer); wwMatched(d); }
+  else if (!d.waiting) { clearInterval(wwTimer);
+    document.getElementById('wwStatus').textContent = '行列から切れました。もう一度押してください。';
+    document.getElementById('wwJoinBtn').disabled = false; }
+}
+function wwMatched(d) {
+  ww.game_id = d.game_id; ww.role = d.role; ww.identity_id = d.identity_id;
+  document.getElementById('wwStatus').textContent = '5人そろいました！ 試合開始です。';
+  document.getElementById('wwRole').innerHTML =
+    'あなたの役は <b>' + (d.role === 'werewolf' ? '人狼' : '村人') + '</b> です。' +
+    '<br><span class="small">game_id：' + d.game_id + '（ゲーム中の画面は次の段階で追加）</span>';
+}
+</script>
+</body>
+</html>
