@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ヒット&ブロー - Fの板</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080c08;color:#ccc;font-family:'MS PGothic',monospace;min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:16px}
+.wrap{max-width:520px;width:100%}
+h2{color:#4ade80;font-size:13px;margin:0 0 4px}
+.small{font-size:10px;color:#2a4a2a;margin:0 0 12px}
+a{color:#4ade80}
+
+/* 対戦エリア */
+.board{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.side{background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:10px}
+.side.player{border-color:#1a4a1a}
+.side.ai{border-color:#3a1a1a}
+.side-label{font-size:10px;color:#4ade80;margin-bottom:6px}
+.side.ai .side-label{color:#f87171}
+.history{max-height:240px;overflow-y:auto;font-size:10px}
+.hist-row{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #0a1a0a}
+.digits{display:flex;gap:3px}
+.digit{width:18px;height:22px;background:#0a2a0a;border:1px solid #1a4a1a;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#86efac}
+.side.ai .digit{background:#2a0a0a;border-color:#4a1a1a;color:#fca5a5}
+.hb{font-size:9px;color:#888}
+.hit{color:#4ade80;font-weight:bold}
+.blow{color:#fbbf24}
+.turn-no{font-size:9px;color:#1a3a1a;min-width:16px}
+
+/* 入力エリア */
+.input-area{background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:12px;margin:10px 0}
+.input-label{font-size:10px;color:#2a4a2a;margin-bottom:8px}
+.digit-input{display:flex;gap:6px;margin-bottom:10px;justify-content:center}
+.digit-btn{width:36px;height:44px;background:#0a2a0a;border:1px solid #1a4a1a;border-radius:6px;color:#86efac;font-size:18px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color .15s}
+.digit-btn.filled{border-color:#4ade80;background:#0d3a0d}
+.digit-btn.active{border-color:#86efac;box-shadow:0 0 6px #4ade8066}
+.numpad{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px}
+.num{padding:9px 0;background:#0a1a0a;border:1px solid #1a3a1a;border-radius:5px;color:#aaa;font-size:14px;cursor:pointer;text-align:center;transition:background .1s}
+.num:hover:not(:disabled){background:#1a3a1a;color:#4ade80}
+.num:disabled{opacity:.3;cursor:not-allowed}
+.num.used{opacity:.25}
+.del{background:#1a0a0a;border-color:#3a1a1a;color:#f87171}
+.del:hover{background:#2a0a0a}
+.btn-submit{width:100%;padding:10px;background:#166534;color:#86efac;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit}
+.btn-submit:hover:not(:disabled){background:#15803d}
+.btn-submit:disabled{background:#111;color:#333;cursor:not-allowed}
+
+/* AI次の手 */
+.ai-next{background:#1a0808;border:1px solid #3a1010;border-radius:6px;padding:8px;font-size:11px;margin:6px 0;color:#fca5a5}
+.ai-next-digits{display:flex;gap:4px;margin-top:4px}
+.ai-next-digit{width:22px;height:26px;background:#2a0a0a;border:1px solid #4a1a1a;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;color:#fca5a5}
+
+/* ステータス */
+.status-bar{font-size:10px;color:#2a4a2a;margin:4px 0;text-align:center}
+.turn-counter{color:#4ade80}
+
+/* 結果 */
+.result-box{background:#060e06;border:1px solid #1a4a1a;border-radius:8px;padding:16px;text-align:center;margin:10px 0;display:none}
+.result-box.show{display:block}
+.result-title{font-size:16px;font-weight:bold;margin-bottom:6px}
+.result-win{color:#4ade80}
+.result-lose{color:#f87171}
+.result-draw{color:#fbbf24}
+
+/* ランキング */
+.rank-wrap{margin:14px 0}
+.rank-title{font-size:10px;color:#2a4a2a;margin:8px 0 4px}
+.rank-table{width:100%;border-collapse:collapse;font-size:10px}
+.rank-table th{color:#1a4a1a;padding:3px 6px;text-align:left;border-bottom:1px solid #0a2a0a}
+.rank-table td{padding:3px 6px;border-bottom:1px solid #060e06;color:#6a8a6a}
+.rank-table tr:first-child td{color:#4ade80}
+
+/* セットアップ */
+.setup{background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:16px;margin:10px 0}
+.setup h3{font-size:11px;color:#4ade80;margin:0 0 10px}
+.setup input{width:100%;background:#040c04;border:1px solid #1a3a1a;color:#ddd;padding:7px;font-size:12px;font-family:inherit;border-radius:4px;outline:none;margin-bottom:8px}
+.setup input:focus{border-color:#4ade80}
+.btn-green{padding:8px 20px;background:#166534;color:#86efac;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit}
+.btn-green:hover{background:#15803d}
+.btn-sub{padding:7px 14px;background:#111;border:1px solid #222;color:#555;border-radius:6px;font-size:10px;cursor:pointer;font-family:inherit}
+.msg{font-size:10px;color:#f87171;margin:4px 0;min-height:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>🔢 ヒット&ブロー</h2>
+  <p class="small">4桁の数字（重複なし）を当て合う。AIは最強。<a href="./game.html">← ゲーム広場</a></p>
+
+  <!-- セットアップ -->
+  <div class="setup" id="setupArea">
+    <h3>ゲーム開始</h3>
+    <input type="text" id="koteInput" placeholder="コテ名（ランキング表示用）" maxlength="20">
+    <div style="font-size:10px;color:#2a4a2a;margin-bottom:10px">
+      AIが4桁を設定→あなたが当てる。同時にあなたの4桁をAIが推理します。
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn-green" onclick="startGame()">開始する</button>
+      <button class="btn-sub" onclick="showRanking()">ランキング</button>
+    </div>
+    <div class="msg" id="setupMsg"></div>
+  </div>
+
+  <!-- AIの次の手（セットアップ後、プレイヤーの数字設定） -->
+  <div id="aiSetupArea" style="display:none;background:#1a0808;border:1px solid #3a1010;border-radius:8px;padding:12px;margin:10px 0">
+    <div style="font-size:10px;color:#fca5a5;margin-bottom:6px">🤖 AIがあなたの数字を推理します。まずAIの最初の推理に答えてください：</div>
+    <div id="aiFirstGuessDisplay" class="ai-next-digits" style="margin-bottom:8px"></div>
+    <div style="font-size:10px;color:#2a4a2a;margin-bottom:6px">あなたの4桁の数字を先に決めてください（AIには教えません）</div>
+    <div class="digit-input" id="mySecretInput">
+      <div class="digit-btn" id="ms0">－</div>
+      <div class="digit-btn" id="ms1">－</div>
+      <div class="digit-btn" id="ms2">－</div>
+      <div class="digit-btn" id="ms3">－</div>
+    </div>
+    <div class="numpad" id="mySecretPad"></div>
+    <div class="msg" id="aiSetupMsg"></div>
+  </div>
+
+  <!-- ゲームエリア -->
+  <div id="gameArea" style="display:none">
+    <div class="status-bar">ターン <span class="turn-counter" id="turnDisp">1</span> / 10</div>
+
+    <div class="board">
+      <div class="side player">
+        <div class="side-label">👤 あなた</div>
+        <div class="history" id="playerHistory"></div>
+      </div>
+      <div class="side ai">
+        <div class="side-label">🤖 AI（強さMAX）</div>
+        <div class="history" id="aiHistory"></div>
+      </div>
+    </div>
+
+    <!-- AIの次の推理 -->
+    <div class="ai-next" id="aiNextArea" style="display:none">
+      <div style="font-size:9px;color:#888">AIの次の推理 → Hit/Blowを教えてください</div>
+      <div class="ai-next-digits" id="aiNextDigits"></div>
+    </div>
+
+    <!-- プレイヤー入力 -->
+    <div class="input-area">
+      <div class="input-label">あなたの推理を入力（重複なし4桁）</div>
+      <div class="digit-input">
+        <div class="digit-btn" id="d0">－</div>
+        <div class="digit-btn" id="d1">－</div>
+        <div class="digit-btn" id="d2">－</div>
+        <div class="digit-btn" id="d3">－</div>
+      </div>
+      <div class="numpad" id="numpad"></div>
+      <div class="msg" id="gameMsg"></div>
+      <button class="btn-submit" id="submitBtn" onclick="submitMove()" disabled>送信</button>
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="result-box" id="resultBox">
+    <div class="result-title" id="resultTitle"></div>
+    <div style="font-size:11px;color:#888;margin:6px 0" id="resultDetail"></div>
+    <button class="btn-green" onclick="resetGame()" style="margin-top:10px">もう一度</button>
+    <button class="btn-sub" onclick="showRanking()" style="margin-top:6px;margin-left:6px">ランキング</button>
+  </div>
+
+  <!-- ランキング -->
+  <div class="rank-wrap" id="rankWrap" style="display:none">
+    <div class="rank-title">📊 最短手数 TOP10</div>
+    <table class="rank-table"><thead><tr><th>#</th><th>コテ</th><th>手数</th><th>時間</th></tr></thead><tbody id="rankTurns"></tbody></table>
+    <div class="rank-title" style="margin-top:10px">⚡ 最短時間 TOP10</div>
+    <table class="rank-table"><thead><tr><th>#</th><th>コテ</th><th>手数</th><th>時間</th></tr></thead><tbody id="rankTime"></tbody></table>
+    <button class="btn-sub" style="margin-top:8px" onclick="document.getElementById('rankWrap').style.display='none'">閉じる</button>
+  </div>
+</div>
+
+<script>
+const API = 'https://fnoita-board.mogumogu7la001.workers.dev/api/hb';
+
+let gameId = null;
+let turn = 1;
+let playerGuess = [];
+let mySecret = [];
+let mySecretSet = false;
+let aiCurrentGuess = [];
+let aiHistory = [];
+let playerHistory = [];
+let activeSlot = 0;  // 現在フォーカスのスロット
+
+// ─── セットアップ ───────────────────────────────────────────
+async function startGame() {
+  const kote = document.getElementById('koteInput').value.trim() || 'NoName';
+  document.getElementById('setupMsg').textContent = '接続中...';
+  try {
+    const r = await fetch(`${API}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kote }),
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'エラー');
+    gameId = data.game_id;
+    turn = 1;
+    aiCurrentGuess = data.ai_guess;
+    aiHistory = []; playerHistory = [];
+    mySecret = []; mySecretSet = false;
+    document.getElementById('setupArea').style.display = 'none';
+    document.getElementById('setupMsg').textContent = '';
+    showAiSetup(data.ai_guess);
+  } catch(e) {
+    document.getElementById('setupMsg').textContent = e.message;
+  }
+}
+
+// AIの最初の推理に答えるフェーズ
+function showAiSetup(aiGuess) {
+  document.getElementById('aiSetupArea').style.display = 'block';
+  const disp = document.getElementById('aiFirstGuessDisplay');
+  disp.innerHTML = aiGuess.map(n => `<div class="ai-next-digit">${n}</div>`).join('');
+  buildMySecretPad();
+}
+
+function buildMySecretPad() {
+  const pad = document.getElementById('mySecretPad');
+  pad.innerHTML = '';
+  const nums = [0,1,2,3,4,5,6,7,8,9];
+  nums.forEach(n => {
+    const btn = document.createElement('button');
+    btn.className = 'num'; btn.textContent = n;
+    btn.onclick = () => mySecretTap(n);
+    btn.id = `msn${n}`;
+    pad.appendChild(btn);
+  });
+  const del = document.createElement('button');
+  del.className = 'num del'; del.textContent = '⌫';
+  del.onclick = mySecretDel;
+  pad.appendChild(del);
+}
+
+function mySecretTap(n) {
+  if (mySecret.includes(n) || mySecret.length >= 4) return;
+  mySecret.push(n);
+  updateMySecretDisplay();
+}
+function mySecretDel() {
+  mySecret.pop();
+  updateMySecretDisplay();
+}
+function updateMySecretDisplay() {
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById(`ms${i}`);
+    el.textContent = mySecret[i] !== undefined ? mySecret[i] : '－';
+    el.className = 'digit-btn' + (mySecret[i] !== undefined ? ' filled' : '');
+  }
+  [0,1,2,3,4,5,6,7,8,9].forEach(n => {
+    const btn = document.getElementById(`msn${n}`);
+    if (btn) btn.className = 'num' + (mySecret.includes(n) ? ' used' : '');
+  });
+  if (mySecret.length === 4) confirmMySecret();
+}
+function confirmMySecret() {
+  if (mySecret.length !== 4) return;
+  document.getElementById('aiSetupMsg').textContent = `あなたの数字: ${mySecret.join('')} に決定。ゲーム開始！`;
+  mySecretSet = true;
+  setTimeout(() => {
+    document.getElementById('aiSetupArea').style.display = 'none';
+    startPlayPhase();
+  }, 800);
+}
+
+// ─── ゲームフェーズ開始 ─────────────────────────────────────
+function startPlayPhase() {
+  document.getElementById('gameArea').style.display = 'block';
+  document.getElementById('resultBox').classList.remove('show');
+  renderAiNext(aiCurrentGuess);
+  buildNumpad();
+  updateTurnDisplay();
+}
+
+function buildNumpad() {
+  const pad = document.getElementById('numpad');
+  pad.innerHTML = '';
+  const nums = [0,1,2,3,4,5,6,7,8,9];
+  nums.forEach(n => {
+    const btn = document.createElement('button');
+    btn.className = 'num'; btn.textContent = n;
+    btn.id = `pn${n}`;
+    btn.onclick = () => numTap(n);
+    pad.appendChild(btn);
+  });
+  const del = document.createElement('button');
+  del.className = 'num del'; del.textContent = '⌫';
+  del.onclick = numDel;
+  pad.appendChild(del);
+  playerGuess = [];
+  updateGuessDisplay();
+}
+
+function numTap(n) {
+  if (playerGuess.includes(n) || playerGuess.length >= 4) return;
+  playerGuess.push(n);
+  updateGuessDisplay();
+}
+function numDel() {
+  playerGuess.pop();
+  updateGuessDisplay();
+}
+function updateGuessDisplay() {
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById(`d${i}`);
+    el.textContent = playerGuess[i] !== undefined ? playerGuess[i] : '－';
+    el.className = 'digit-btn' + (playerGuess[i] !== undefined ? ' filled' : '');
+  }
+  [0,1,2,3,4,5,6,7,8,9].forEach(n => {
+    const btn = document.getElementById(`pn${n}`);
+    if (btn) btn.className = 'num' + (playerGuess.includes(n) ? ' used' : '');
+  });
+  document.getElementById('submitBtn').disabled = playerGuess.length !== 4;
+}
+
+function renderAiNext(guess) {
+  const area = document.getElementById('aiNextArea');
+  if (!guess) { area.style.display = 'none'; return; }
+  area.style.display = 'block';
+  document.getElementById('aiNextDigits').innerHTML =
+    guess.map(n => `<div class="ai-next-digit">${n}</div>`).join('');
+}
+
+function updateTurnDisplay() {
+  document.getElementById('turnDisp').textContent = turn;
+}
+
+// ─── 手を送信 ───────────────────────────────────────────────
+async function submitMove() {
+  if (playerGuess.length !== 4) return;
+  document.getElementById('submitBtn').disabled = true;
+  document.getElementById('gameMsg').textContent = '判定中...';
+
+  // AIの現在の推理に対するHit/Blow（mySecretとの照合）
+  const aiGuessResult = calcHB(mySecret, aiCurrentGuess);
+
+  try {
+    const r = await fetch(`${API}/${gameId}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        guess: playerGuess,
+        ai_answer: mySecret,
+      }),
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'エラー');
+
+    // プレイヤー履歴追加
+    playerHistory.push({ guess: [...playerGuess], hit: data.player_result.hit, blow: data.player_result.blow });
+    renderHistory('playerHistory', playerHistory, false);
+
+    // AI履歴追加
+    if (data.ai_result) {
+      aiHistory.push({ guess: data.ai_result.guess, hit: data.ai_result.hit, blow: data.ai_result.blow });
+      renderHistory('aiHistory', aiHistory, true);
+    }
+
+    if (data.status === 'done') {
+      showResult(data);
+    } else {
+      turn = data.turn;
+      updateTurnDisplay();
+      aiCurrentGuess = data.next_ai_guess;
+      renderAiNext(aiCurrentGuess);
+      playerGuess = [];
+      updateGuessDisplay();
+      document.getElementById('gameMsg').textContent = '';
+    }
+  } catch(e) {
+    document.getElementById('gameMsg').textContent = e.message;
+    document.getElementById('submitBtn').disabled = false;
+  }
+}
+
+// ローカルでHit/Blow計算（AI回答用）
+function calcHB(secret, guess) {
+  let hit = 0, blow = 0;
+  for (let i = 0; i < 4; i++) {
+    if (secret[i] === guess[i]) hit++;
+    else if (secret.includes(guess[i])) blow++;
+  }
+  return { hit, blow };
+}
+
+function renderHistory(elId, history, isAi) {
+  const el = document.getElementById(elId);
+  el.innerHTML = history.map((h, i) => `
+    <div class="hist-row">
+      <span class="turn-no">${i+1}</span>
+      <div class="digits">${h.guess.map(n => `<div class="digit">${n}</div>`).join('')}</div>
+      <span class="hb"><span class="hit">${h.hit}H</span> <span class="blow">${h.blow}B</span></span>
+    </div>
+  `).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function showResult(data) {
+  document.getElementById('gameArea').style.display = 'none';
+  document.getElementById('aiNextArea').style.display = 'none';
+  const box = document.getElementById('resultBox');
+  box.classList.add('show');
+  const title = document.getElementById('resultTitle');
+  const detail = document.getElementById('resultDetail');
+  if (data.result === 'player_win') {
+    title.className = 'result-title result-win'; title.textContent = '🎉 あなたの勝ち！';
+    detail.textContent = `${turn}手で正解！${data.secret_reveal ? `答えは ${data.secret_reveal.join('')} でした。` : ''}`;
+  } else if (data.result === 'ai_win') {
+    title.className = 'result-title result-lose'; title.textContent = '😢 AIの勝ち';
+    detail.textContent = `AIが先に正解。${data.secret_reveal ? `答えは ${data.secret_reveal.join('')} でした。` : ''}`;
+  } else if (data.result === 'draw') {
+    title.className = 'result-title result-draw'; title.textContent = '🤝 引き分け';
+    detail.textContent = `同じターンで両方正解！${data.secret_reveal ? `答えは ${data.secret_reveal.join('')} でした。` : ''}`;
+  } else {
+    title.className = 'result-title result-lose'; title.textContent = '⏱ 時間切れ';
+    detail.textContent = `10手以内に解けませんでした。${data.secret_reveal ? `答えは ${data.secret_reveal.join('')} でした。` : ''}`;
+  }
+}
+
+function resetGame() {
+  gameId = null; turn = 1; playerGuess = []; mySecret = []; mySecretSet = false;
+  aiCurrentGuess = []; aiHistory = []; playerHistory = [];
+  document.getElementById('resultBox').classList.remove('show');
+  document.getElementById('gameArea').style.display = 'none';
+  document.getElementById('aiSetupArea').style.display = 'none';
+  document.getElementById('setupArea').style.display = 'block';
+  document.getElementById('setupMsg').textContent = '';
+}
+
+// ─── ランキング ─────────────────────────────────────────────
+async function showRanking() {
+  document.getElementById('rankWrap').style.display = 'block';
+  try {
+    const r = await fetch(`${API}/ranking`);
+    const data = await r.json();
+    renderRank('rankTurns', data.by_turns || []);
+    renderRank('rankTime', data.by_time || []);
+  } catch(e) {
+    document.getElementById('rankTurns').innerHTML = '<tr><td colspan="4" style="color:#f87171">取得失敗</td></tr>';
+  }
+}
+function renderRank(elId, list) {
+  const el = document.getElementById(elId);
+  if (!list.length) { el.innerHTML = '<tr><td colspan="4" style="color:#1a3a1a">記録なし</td></tr>'; return; }
+  el.innerHTML = list.map((r, i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td>${r.kote}</td>
+      <td>${r.turns}手</td>
+      <td>${(r.elapsed_ms/1000).toFixed(1)}秒</td>
+    </tr>
+  `).join('');
+}
+</script>
+</body>
+</html>

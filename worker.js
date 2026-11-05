@@ -857,6 +857,9 @@ async function handleRequest(request, env) {
     // ─── インディアンポーカー ────────────────────────────────────
     if (parts[0] === 'indian') return await handleIndian(request, kv, url, parts);
 
+    // ─── ヒット&ブロー ──────────────────────────────────────────
+    if (parts[0] === 'hb') return await handleHitBlow(request, kv, url, parts);
+
     return json({ error: 'not found' }, 404);
 }
 
@@ -2122,4 +2125,224 @@ async function handleIndian(request, kv, url, parts) {
   }
 
   return json({ error: 'indian: not found' }, 404);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HIT & BLOW HANDLER
+// ═══════════════════════════════════════════════════════════════
+
+const HB_DIGITS = 4;
+const HB_MAX_TURNS = 10;
+const HB_KV_TTL = 86400;         // 1日TTL
+const HB_EXPIRES_MS = 30 * 60 * 1000;  // 30分
+
+function hbNewGameId() {
+  return 'hb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+async function hbGetGame(kv, id) {
+  return await kv.get(`hb_game_${id}`, 'json');
+}
+async function hbSaveGame(kv, game) {
+  await kv.put(`hb_game_${game.id}`, JSON.stringify(game), { expirationTtl: HB_KV_TTL });
+}
+
+// 重複なし4桁の数字を生成
+function hbGenSecret() {
+  const digits = [0,1,2,3,4,5,6,7,8,9];
+  const result = [];
+  for (let i = 0; i < HB_DIGITS; i++) {
+    const idx = Math.floor(Math.random() * digits.length);
+    result.push(digits.splice(idx, 1)[0]);
+  }
+  return result;
+}
+
+// Hit/Blow判定
+function hbJudge(secret, guess) {
+  let hit = 0, blow = 0;
+  for (let i = 0; i < HB_DIGITS; i++) {
+    if (secret[i] === guess[i]) hit++;
+    else if (secret.includes(guess[i])) blow++;
+  }
+  return { hit, blow };
+}
+
+// 全候補リスト生成（0123〜9876, 重複なし4桁）
+function hbAllCandidates() {
+  const result = [];
+  for (let a = 0; a <= 9; a++)
+    for (let b = 0; b <= 9; b++) if (b !== a)
+      for (let c = 0; c <= 9; c++) if (c !== a && c !== b)
+        for (let d = 0; d <= 9; d++) if (d !== a && d !== b && d !== c)
+          result.push([a, b, c, d]);
+  return result;
+}
+
+// 最強AIの推理（制約一貫性フィルタ）
+function hbAiGuess(history) {
+  if (history.length === 0) return [1, 2, 3, 4];  // 初手固定
+  let candidates = hbAllCandidates();
+  for (const { guess, hit, blow } of history) {
+    candidates = candidates.filter(c => {
+      const r = hbJudge(c, guess);
+      return r.hit === hit && r.blow === blow;
+    });
+  }
+  // minimax: 最悪ケースを最小化する手を選ぶ（候補が多い時はランダムで省略）
+  if (candidates.length <= 20) {
+    let best = null, bestWorst = Infinity;
+    const pool = candidates.length > 0 ? candidates : hbAllCandidates();
+    for (const g of pool) {
+      const counts = {};
+      for (const c of candidates) {
+        const r = hbJudge(c, g);
+        const key = `${r.hit},${r.blow}`;
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      const worst = Math.max(...Object.values(counts));
+      if (worst < bestWorst || (worst === bestWorst && candidates.includes(g))) {
+        bestWorst = worst; best = g;
+      }
+    }
+    return best || candidates[0];
+  }
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// ランキング更新（最短手数・最短時間 各TOP10）
+async function hbUpdateRanking(kv, kote, turns, elapsed_ms) {
+  for (const type of ['turns', 'time']) {
+    const key = `hb_rank_${type}`;
+    const rank = (await kv.get(key, 'json')) || [];
+    const entry = { kote, turns, elapsed_ms, at: Date.now() };
+    rank.push(entry);
+    rank.sort((a, b) => type === 'turns'
+      ? a.turns - b.turns || a.elapsed_ms - b.elapsed_ms
+      : a.elapsed_ms - b.elapsed_ms || a.turns - b.turns);
+    await kv.put(key, JSON.stringify(rank.slice(0, 10)), { expirationTtl: 86400 * 90 });
+  }
+}
+
+async function handleHitBlow(request, kv, url, parts) {
+  const method = request.method;
+
+  // ─── GET /api/hb/ranking ──────────────────────────────────
+  if (method === 'GET' && parts[1] === 'ranking') {
+    const [byTurns, byTime] = await Promise.all([
+      kv.get('hb_rank_turns', 'json'),
+      kv.get('hb_rank_time', 'json'),
+    ]);
+    return json({ ok: true, by_turns: byTurns || [], by_time: byTime || [] });
+  }
+
+  // ─── POST /api/hb/start ───────────────────────────────────
+  if (method === 'POST' && parts[1] === 'start') {
+    const body = await request.json().catch(() => ({}));
+    const kote = String(body.kote || 'NoName').slice(0, 40);
+    const secret = hbGenSecret();
+    const aiSecret = hbGenSecret();
+    const gameId = hbNewGameId();
+    const now = Date.now();
+    const game = {
+      id: gameId, status: 'playing', kote,
+      secret,            // プレイヤーが当てる数字
+      ai_secret: aiSecret,  // AIが当てる数字（プレイヤーが設定した数字）
+      player_history: [],   // プレイヤーの推理履歴
+      ai_history: [],       // AIの推理履歴
+      turn: 1,
+      result: null,
+      started_at: now,
+      expires_at: now + HB_EXPIRES_MS,
+    };
+    await hbSaveGame(kv, game);
+    // AIの最初の推理
+    const aiFirst = hbAiGuess([]);
+    return json({
+      ok: true, game_id: gameId,
+      digits: HB_DIGITS, max_turns: HB_MAX_TURNS,
+      ai_guess: aiFirst,
+      message: `ゲーム開始！${HB_DIGITS}桁の数字（重複なし）を当ててください。AIも同時に推理します。`,
+    });
+  }
+
+  // ─── POST /api/hb/{game_id}/move ──────────────────────────
+  if (method === 'POST' && parts[2] === 'move') {
+    const gameId = parts[1];
+    const game = await hbGetGame(kv, gameId);
+    if (!game) return json({ error: 'game not found' }, 404);
+    if (game.status !== 'playing') return json({ error: 'ゲームは既に終了しています' }, 409);
+    if (Date.now() > game.expires_at) return json({ error: 'ゲームが時間切れです' }, 410);
+
+    const body = await request.json().catch(() => ({}));
+    // プレイヤーの推理（4桁の数字配列）
+    const playerGuess = Array.isArray(body.guess) ? body.guess.map(Number) : [];
+    if (playerGuess.length !== HB_DIGITS || new Set(playerGuess).size !== HB_DIGITS
+        || playerGuess.some(n => n < 0 || n > 9 || !Number.isInteger(n))) {
+      return json({ error: `${HB_DIGITS}桁の重複なし数字を送ってください` }, 400);
+    }
+
+    // AIがプレイヤーの数字に対してどう答えるか（プレイヤーが設定した数字 = ai_secret）
+    const aiAnswer = Array.isArray(body.ai_answer) ? body.ai_answer.map(Number) : null;
+
+    // プレイヤーの推理を判定
+    const playerResult = hbJudge(game.secret, playerGuess);
+    game.player_history.push({ guess: playerGuess, ...playerResult });
+
+    // AIの推理を判定（プレイヤーが ai_answer を送ってきた場合）
+    let aiGuessResult = null;
+    let nextAiGuess = null;
+    if (aiAnswer && aiAnswer.length === HB_DIGITS) {
+      const aiGuess = hbAiGuess(game.ai_history);
+      const aiResult = hbJudge(aiAnswer, aiGuess);
+      game.ai_history.push({ guess: aiGuess, hit: aiResult.hit, blow: aiResult.blow });
+      aiGuessResult = { guess: aiGuess, ...aiResult };
+      if (aiResult.hit < HB_DIGITS && game.turn < HB_MAX_TURNS) {
+        nextAiGuess = hbAiGuess(game.ai_history);
+      }
+    }
+
+    const now = Date.now();
+    let playerWon = playerResult.hit === HB_DIGITS;
+    let aiWon = aiAnswer && game.ai_history.length > 0
+      && game.ai_history[game.ai_history.length - 1].hit === HB_DIGITS;
+    let turnUp = game.turn >= HB_MAX_TURNS;
+
+    if (playerWon || aiWon || turnUp) {
+      game.status = 'done';
+      game.result = playerWon && aiWon ? 'draw'
+        : playerWon ? 'player_win'
+        : aiWon ? 'ai_win' : 'timeout';
+      game.finished_at = now;
+      game.secret_reveal = game.secret;
+      if (playerWon) {
+        const elapsed = now - game.started_at;
+        await hbUpdateRanking(kv, game.kote, game.turn, elapsed);
+      }
+    } else {
+      game.turn++;
+    }
+
+    await hbSaveGame(kv, game);
+    return json({
+      ok: true,
+      player_result: playerResult,
+      ai_result: aiGuessResult,
+      next_ai_guess: nextAiGuess,
+      turn: game.turn,
+      status: game.status,
+      result: game.result,
+      secret_reveal: game.secret_reveal || null,
+    });
+  }
+
+  // ─── GET /api/hb/{game_id} ────────────────────────────────
+  if (method === 'GET' && parts[1] && parts[1] !== 'ranking') {
+    const game = await hbGetGame(kv, parts[1]);
+    if (!game) return json({ error: 'game not found' }, 404);
+    const pub = { ...game };
+    if (pub.status === 'playing') { delete pub.secret; delete pub.ai_secret; }
+    return json(pub);
+  }
+
+  return json({ error: 'hb: not found' }, 404);
 }
