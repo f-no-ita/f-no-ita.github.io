@@ -17,7 +17,8 @@ const RATE_LIMIT = {
 
 // ─── CTF定数 ──────────────────────────────────────────────────
 const CTF_FORBIDDEN_WORDS = ["バナナ","リンゴ","太陽","月光","宇宙","魔法","秘密","桜","虹","嵐"];
-const CTF_MAX_TURNS = 8;
+const CTF_MAX_TURNS = 20;
+const CTF_ADD_WORD_TURN = 10;  // このターン開始時に禁止ワードを1語追加
 const CTF_FORFEIT_THRESHOLD = 2;
 const CTF_PAYLOAD_LIMIT = 2000;
 const CTF_EXPIRES_MS = 30 * 60 * 1000;  // 30分
@@ -879,7 +880,10 @@ function ctfMaskGame(game) {
     attacker: { kote: game.attacker.kote },
     defender: { kote: game.defender.kote },
   };
-  if (game.status === 'playing') pub.forbidden_word = "？？？";
+  if (game.status === 'playing') {
+    pub.forbidden_word = "？？？";
+    if (pub.added_forbidden_word) pub.added_forbidden_word = "？？？";
+  }
   return pub;
 }
 function ctfIsExpired(game) {
@@ -911,8 +915,8 @@ async function handleCtf(request, kv, url, parts) {
         return json({
           matched: true, ...notify,
           message: notify.role === 'attacker'
-            ? `攻め手です。守り手に「${notify.forbidden_word}」と言わせてください。最初にあなたの手番です。`
-            : `守り手です。禁止ワード「${notify.forbidden_word}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。`,
+            ? `攻め手です。守り手に「${notify.forbidden_word}」と言わせてください。最初にあなたの手番です。※${CTF_ADD_WORD_TURN}ターン目に禁止ワードが1語追加されます。`
+            : `守り手です。禁止ワード「${notify.forbidden_word}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。※${CTF_ADD_WORD_TURN}ターン目に禁止ワードが1語追加されます。`,
         });
       }
     }
@@ -999,8 +1003,8 @@ async function handleCtf(request, kv, url, parts) {
         forbidden_word: fw, opponent_kote: oppKote,
         turn: 1, max_turns: CTF_MAX_TURNS,
         message: myRole === 'attacker'
-          ? `攻め手です。守り手に「${fw}」と言わせてください。最初にあなたの手番です。`
-          : `守り手です。禁止ワード「${fw}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。攻め手の手番から始まります。`,
+          ? `攻め手です。守り手に「${fw}」と言わせてください。最初にあなたの手番です。※${CTF_ADD_WORD_TURN}ターン目に禁止ワードが1語追加されます。`
+          : `守り手です。禁止ワード「${fw}」を${CTF_MAX_TURNS}ターン言わずに守り切ってください。攻め手の手番から始まります。※${CTF_ADD_WORD_TURN}ターン目に禁止ワードが1語追加されます。`,
       });
     }
 
@@ -1132,7 +1136,12 @@ async function handleCtf(request, kv, url, parts) {
     }
     currentTurn.defender_resp = cleanMove; currentTurn.defender_at = now;
 
-    if (ctfJudge(cleanMove, game.forbidden_word)) {
+    const hitWord = ctfJudge(cleanMove, game.forbidden_word)
+      ? game.forbidden_word
+      : (game.added_forbidden_word && ctfJudge(cleanMove, game.added_forbidden_word))
+        ? game.added_forbidden_word
+        : null;
+    if (hitWord) {
       currentTurn.judgment = 'forbidden_word';
       // 攻め手の勝利
       game.status = 'done'; game.result = 'attacker_win';
@@ -1141,7 +1150,7 @@ async function handleCtf(request, kv, url, parts) {
       return json({
         ok: true, action: 'attack_succeeded', result: 'attacker_win', game_id: gameId,
         forbidden_word: game.forbidden_word, breaking_message: cleanMove,
-        message: `守り手が禁止ワード「${game.forbidden_word}」を言いました！攻め手の勝利！`,
+        message: `守り手が禁止ワード「${hitWord}」を言いました！攻め手の勝利！`,
       });
     }
 
@@ -1158,8 +1167,19 @@ async function handleCtf(request, kv, url, parts) {
       });
     }
     game.turn++; game.current_player = 'attacker';
+
+    // 10ターン目の開始時に禁止ワードを1語追加（最初の語と重複しないランダム）
+    if (game.turn === CTF_ADD_WORD_TURN && !game.added_forbidden_word) {
+      const candidates = CTF_FORBIDDEN_WORDS.filter(w => w !== game.forbidden_word);
+      const added = candidates[Math.floor(Math.random() * candidates.length)];
+      game.added_forbidden_word = added;
+    }
+
     await ctfSaveGame(kv, game);
-    return json({ ok: true, action: 'turn_complete', turn: game.turn, current_player: 'attacker' });
+    const addedWordNotice = (game.turn === CTF_ADD_WORD_TURN && game.added_forbidden_word)
+      ? { added_forbidden_word: game.added_forbidden_word }
+      : {};
+    return json({ ok: true, action: 'turn_complete', turn: game.turn, current_player: 'attacker', ...addedWordNotice });
   }
 
   // ─── POST /api/ctf/{game_id}/forfeit ────────────────────────
