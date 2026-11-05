@@ -16,7 +16,16 @@ const RATE_LIMIT = {
 };
 
 // ─── CTF定数 ──────────────────────────────────────────────────
-const CTF_FORBIDDEN_WORDS = ["バナナ","リンゴ","太陽","月光","宇宙","魔法","秘密","桜","虹","嵐"];
+const CTF_WORD_CATEGORIES = {
+  自然:     ["桜","紅葉","雪","霧","虹","嵐","雷","霜","波","滝","岩","砂","泥","苔","霞"],
+  食べ物:   ["梅","柿","桃","栗","柚子","蕎麦","味噌","醤油","豆腐","餅","芋","茸","蜜","塩","酢"],
+  感情:     ["喜び","怒り","悲しみ","秘密","夢","希望","恐怖","嫉妬","誇り","後悔","安堵","憧れ","孤独","勇気","迷い"],
+  宇宙神秘: ["月光","彗星","魔法","星座","銀河","予言","呪い","奇跡","幻","霊","運命","輪廻","神話","封印","禁忌"],
+  社会時事: ["選挙","物価","地震","台風","移民","格差","犯罪","記録","代表","条約","制裁","疫病","復興","証拠","容疑"],
+  技術:     ["衛星","ロケット","電波","暗号","設計","回路","燃料","爆発","核融合","人工知能","量子","センサー","通信","制御","誤作動"],
+};
+// 全語フラット（初期ワード選択用）
+const CTF_FORBIDDEN_WORDS = Object.values(CTF_WORD_CATEGORIES).flat();
 const CTF_MAX_TURNS = 20;
 const CTF_ADD_WORD_TURN = 10;  // このターン開始時に禁止ワードを1語追加
 const CTF_FORFEIT_THRESHOLD = 2;
@@ -967,13 +976,17 @@ async function handleCtf(request, kv, url, parts) {
       await kv.put('ctf_queue', JSON.stringify(queue));
 
       const gameId = ctfNewGameId();
-      const fw = CTF_FORBIDDEN_WORDS[Math.floor(Math.random() * CTF_FORBIDDEN_WORDS.length)];
+      const fwIdx = Math.floor(Math.random() * CTF_FORBIDDEN_WORDS.length);
+      const fw = CTF_FORBIDDEN_WORDS[fwIdx];
+      const fwCategory = Object.keys(CTF_WORD_CATEGORIES).find(
+        k => CTF_WORD_CATEGORIES[k].includes(fw)
+      );
       const [attacker, defender] = Math.random() < 0.5 ? [myEntry, opponent] : [opponent, myEntry];
       const aId = await ctfIdentityId(gameId, attacker.kote);
       const dId = await ctfIdentityId(gameId, defender.kote);
 
       const game = {
-        id: gameId, status: 'playing', forbidden_word: fw,
+        id: gameId, status: 'playing', forbidden_word: fw, forbidden_word_category: fwCategory,
         attacker: { kote: attacker.kote, identity_id: aId },
         defender: { kote: defender.kote, identity_id: dId },
         current_player: 'attacker', turn: 1, max_turns: CTF_MAX_TURNS, turns: [],
@@ -1168,10 +1181,13 @@ async function handleCtf(request, kv, url, parts) {
     }
     game.turn++; game.current_player = 'attacker';
 
-    // 10ターン目の開始時に禁止ワードを1語追加（最初の語と重複しないランダム）
+    // 10ターン目の開始時に禁止ワードを1語追加（同カテゴリ・最初の語と重複なし）
     if (game.turn === CTF_ADD_WORD_TURN && !game.added_forbidden_word) {
-      const candidates = CTF_FORBIDDEN_WORDS.filter(w => w !== game.forbidden_word);
-      const added = candidates[Math.floor(Math.random() * candidates.length)];
+      const category = game.forbidden_word_category;
+      const pool = category
+        ? CTF_WORD_CATEGORIES[category].filter(w => w !== game.forbidden_word)
+        : CTF_FORBIDDEN_WORDS.filter(w => w !== game.forbidden_word);
+      const added = pool[Math.floor(Math.random() * pool.length)];
       game.added_forbidden_word = added;
     }
 
