@@ -1,0 +1,8 @@
+name = "fnoita-board"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "BOARD"
+# ★ Cloudflare ダッシュボード → Workers & Pages → KV → FNOITA_BOARD の namespace ID を入れる
+id = "YOUR_KV_NAMESPACE_ID_HERE"
