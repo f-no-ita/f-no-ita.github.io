@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>なげる | 投げる系ゲーム（一段目・3D表示）</title>
+<style>
+  :root{
+    --bg:#f2f4ec; --paper:#fffdf6; --ink:#2f2a22; --muted:#7a7263;
+    --line:#ddd5c2; --accent:#b3542e; --accent-soft:#f7e8df;
+    --good:#2e6b34; --good-soft:#e6f3e4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.7}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 16px 56px}
+  h1{font-size:26px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 14px}
+  main{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .panel{width:330px;flex:none;max-width:100%}
+  #view{flex:1;min-width:300px}
+  #view canvas{display:block;border-radius:12px;width:100%}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 12px}
+  .card h2{font-size:15px;margin:0 0 8px}
+  label{display:block;font-size:14px;margin:8px 0}
+  input[type=range]{width:150px;vertical-align:middle}
+  input[type=number]{width:64px;font:inherit;font-size:14px;padding:4px 6px;border:1px solid var(--line);border-radius:6px}
+  .row{display:flex;gap:8px;margin:10px 0 4px}
+  button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:default}
+  .result{font-size:14.5px;background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:10px;display:none}
+  .result.show{display:block}
+  ul#log{margin:0;padding-left:18px;font-size:13.5px}
+  .muted{color:var(--muted);font-size:12.5px}
+  .rules{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎯 なげる</h1>
+    <p class="sub">投げる系ゲームの一段目（3D表示）。的は同心円3つ。10球の合計点で競う。</p>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="card">
+        <h2>様子</h2>
+        <p id="viewInfo">読み込み中…</p>
+        <p>残り <strong id="balls">10</strong> 球 ／ 合計 <strong id="score">0</strong> 点 <span id="best" class="muted"></span></p>
+      </div>
+      <div class="card">
+        <h2>狙い</h2>
+        <label>角度 <input type="range" id="angle" min="10" max="80" value="45"> <input type="number" id="angleNum" min="10" max="80" value="45"> 度</label>
+        <label>強さ <input type="range" id="power" min="10" max="100" value="85"> <input type="number" id="powerNum" min="10" max="100" value="85"> %</label>
+        <label>向き <input type="number" value="0" disabled> 度（正面固定。二段目で開放）</label>
+        <div class="row">
+          <button type="button" class="primary" id="throwBtn">投げる</button>
+          <button type="button" id="newBtn">新しいゲーム</button>
+        </div>
+        <div class="result" id="result"></div>
+      </div>
+      <div class="card">
+        <h2>記録</h2>
+        <ul id="log"></ul>
+      </div>
+      <div class="card rules">
+        ルール：最初の的だけ距離が数字で見える。的の中（外の輪の中）に入ると、的は5〜15mランダムに遠ざかり、距離は見えなくなる。
+        風はゲームの間ずっと同じで、様子だけ分かる。腕にはクセとブレがある：狙った角度・強さと、実際に抜ける値はずれる。実際に抜けた値は投げた後に表示される。
+        得点は中心の円10点／中の輪5点／外の輪2点。
+      </div>
+    </section>
+    <section id="view" aria-label="3Dの様子"></section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script id="core">
+"use strict";
+const G = 9.8, V_PER = 0.22;
+const RINGS = [ { r: 0.6, pts: 10 }, { r: 1.5, pts: 5 }, { r: 3.0, pts: 2 } ];
+const MAX_BALLS = 10, RELOC_MIN = 5, RELOC_MAX = 15, DIST_CAP = 45;
+
+function computeShot(angleDeg, power, wind){
+  const th = angleDeg * Math.PI / 180;
+  const v = power * V_PER;
+  const range0 = v * v * Math.sin(2 * th) / G;
+  const flight = 2 * v * Math.sin(th) / G;
+  const range = range0 + wind * flight * 0.6;
+  return { v: v, flight: flight, range: range };
+}
+function judgeLanding(landing, target){
+  const err = landing - target, a = Math.abs(err);
+  for (let i = 0; i < RINGS.length; i++){
+    if (a <= RINGS[i].r) return { ring: i + 1, points: RINGS[i].pts, err: err };
+  }
+  return { ring: 0, points: 0, err: err };
+}
+function relocateDistance(dist, rnd){
+  return Math.min(dist + RELOC_MIN + rnd * (RELOC_MAX - RELOC_MIN), DIST_CAP);
+}
+function rollArmBias(rndA, rndP){
+  return { angle: (rndA * 2 - 1) * 2, power: (rndP * 2 - 1) * 4 };
+}
+function applyArm(aimAngle, aimPower, bias, rndA, rndP){
+  const a = aimAngle + bias.angle + (rndA * 2 - 1) * 1;
+  let p = aimPower + bias.power + (rndP * 2 - 1) * 2;
+  if (p < 5) p = 5;
+  if (p > 110) p = 110;
+  return { angle: a, power: p };
+}
+function windText(w){
+  if (Math.abs(w) < 0.7) return "ほぼ無風";
+  const s = Math.abs(w) < 1.6 ? "弱い" : "やや強い";
+  return s + (w > 0 ? "追い風" : "向かい風");
+}
+if (typeof module !== "undefined" && module.exports){
+  module.exports = { computeShot, judgeLanding, relocateDistance, rollArmBias, applyArm, windText, RINGS, MAX_BALLS, DIST_CAP };
+}
+</script>
+<script>
+(function(){
+"use strict";
+const $ = function(id){ return document.getElementById(id); };
+const els = { view: $("view"), angle: $("angle"), angleNum: $("angleNum"), power: $("power"), powerNum: $("powerNum"),
+  throwBtn: $("throwBtn"), newBtn: $("newBtn"), viewInfo: $("viewInfo"), score: $("score"), balls: $("balls"),
+  log: $("log"), best: $("best"), result: $("result") };
+
+let S = null;
+let scene, camera, renderer, ball, targetGroup = null;
+let markers = [], anim = null, trailLine = null, trailPts = [];
+
+function addLog(text){
+  const li = document.createElement("li");
+  li.textContent = text;
+  els.log.appendChild(li);
+}
+function fmt(n, d){ return n.toFixed(d === undefined ? 1 : d); }
+
+function newGame(){
+  S = {
+    target: Math.round((20 + Math.random() * 10) * 10) / 10,
+    wind: Math.round((Math.random() * 5 - 2.5) * 100) / 100,
+    bias: rollArmBias(Math.random(), Math.random()),
+    used: 0, score: 0, first: true, over: false
+  };
+  clearMarkers();
+  resetTrail();
+  if (targetGroup) targetGroup.position.set(S.target, 0, 0);
+  if (ball) ball.position.set(0, 0.35, 0);
+  els.log.innerHTML = "";
+  els.result.className = "result"; els.result.innerHTML = "";
+  addLog("ゲーム開始。風は" + windText(S.wind) + "（ずっと同じ）。");
+  updatePanel();
+}
+function updatePanel(){
+  if (!S) return;
+  els.balls.textContent = String(MAX_BALLS - S.used);
+  els.score.textContent = String(S.score);
+  const distText = S.first ? "的まで " + fmt(S.target) + "m（最初の的だけ数字で見える）"
+                           : "的の距離は非表示。見た目と落ちた場所で読む。";
+  els.viewInfo.textContent = distText + " 風は" + windText(S.wind) + "。";
+  const best = loadBest();
+  els.best.textContent = best ? "（自己ベスト " + best + " 点）" : "";
+}
+function loadBest(){
+  try { const v = localStorage.getItem("nageru_best"); return v ? Number(v) : null; }
+  catch(e){ return null; }
+}
+function saveBest(){
+  try {
+    const b = loadBest();
+    if (b === null || S.score > b) localStorage.setItem("nageru_best", String(S.score));
+  } catch(e){}
+}
+
+function makeSign(text, x){
+  const c = document.createElement("canvas"); c.width = 256; c.height = 128;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fffdf6"; g.fillRect(0, 0, 256, 128);
+  g.strokeStyle = "#7a7263"; g.lineWidth = 8; g.strokeRect(4, 4, 248, 120);
+  g.fillStyle = "#2f2a22"; g.font = "bold 60px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText(text, 128, 68);
+  const tex = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.3), new THREE.MeshBasicMaterial({ map: tex }));
+  m.position.set(x, 0.75, -5.5); scene.add(m);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.8, 6), new THREE.MeshBasicMaterial({ color: 0x8a7a5a }));
+  post.position.set(x, 0.4, -5.55); scene.add(post);
+}
+function buildTarget(){
+  targetGroup = new THREE.Group();
+  const mk = function(radius, color, y){
+    const m = new THREE.Mesh(new THREE.CircleGeometry(radius, 48), new THREE.MeshBasicMaterial({ color: color }));
+    m.rotation.x = -Math.PI / 2; m.position.y = y;
+    targetGroup.add(m);
+  };
+  mk(3.0, 0xe8e2d0, 0.02); mk(1.5, 0xd9534f, 0.03); mk(0.6, 0xf2c230, 0.04);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8), new THREE.MeshBasicMaterial({ color: 0x8a7a5a }));
+  pole.position.set(0, 1.6, -3.6); targetGroup.add(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.8), new THREE.MeshBasicMaterial({ color: 0xd9534f, side: THREE.DoubleSide }));
+  flag.position.set(0.72, 2.75, -3.6); targetGroup.add(flag);
+  scene.add(targetGroup);
+}
+function initView(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfe4ef);
+  camera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+  camera.position.set(-7, 9, 34);
+  camera.lookAt(20, 0, 0);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  els.view.appendChild(renderer.domElement);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 80), new THREE.MeshBasicMaterial({ color: 0x9db877 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(35, 0, 0); scene.add(ground);
+  const grid = new THREE.GridHelper(200, 40, 0xffffff, 0x86a860);
+  grid.material.transparent = true; grid.material.opacity = 0.35;
+  grid.position.set(35, 0.01, 0); scene.add(grid);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.65, 0.3, 16), new THREE.MeshBasicMaterial({ color: 0x5a6b8a }));
+  base.position.set(0, 0.15, 0); scene.add(base);
+  ball = new THREE.Mesh(new THREE.SphereGeometry(0.35, 20, 16), new THREE.MeshBasicMaterial({ color: 0xe07b39 }));
+  ball.position.set(0, 0.35, 0); scene.add(ball);
+  buildTarget();
+  [10, 20, 30, 40, 50].forEach(function(d){ makeSign(d + "m", d); });
+  resize();
+  window.addEventListener("resize", resize);
+  renderer.setAnimationLoop(tick);
+}
+function resize(){
+  if (!renderer) return;
+  const w = els.view.clientWidth || 600;
+  const h = Math.max(300, Math.floor(w * 0.52));
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+function resetTrail(){
+  trailPts = [];
+  if (trailLine){ scene.remove(trailLine); trailLine.geometry.dispose(); trailLine = null; }
+}
+function pushTrail(p){
+  trailPts.push(p.clone());
+  if (trailPts.length > 90) trailPts.shift();
+  if (!trailLine){
+    trailLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff }));
+    scene.add(trailLine);
+  }
+  trailLine.geometry.setFromPoints(trailPts);
+}
+function addMarker(x, ring){
+  const color = ring === 1 ? 0xb8860b : ring === 2 ? 0xd9534f : ring === 3 ? 0x2e6b34 : 0x666666;
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.55, 24), new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.05, 0);
+  scene.add(m); markers.push(m);
+}
+function clearMarkers(){
+  markers.forEach(function(m){ scene.remove(m); });
+  markers = [];
+}
+function tick(){
+  if (anim){
+    const t = (performance.now() - anim.t0) / 1000;
+    if (t >= anim.shot.flight){
+      finishThrow();
+    } else {
+      const th = anim.actual.angle * Math.PI / 180, v = anim.actual.power * V_PER;
+      const x = v * Math.cos(th) * t + 0.5 * anim.aw * t * t;
+      const y = v * Math.sin(th) * t - 0.5 * G * t * t;
+      ball.position.set(x, Math.max(0.35, y + 0.35), 0);
+      pushTrail(ball.position);
+    }
+  }
+  if (renderer) renderer.render(scene, camera);
+}
+function doThrow(){
+  if (!S || S.over || anim) return;
+  const aimA = parseFloat(els.angle.value), aimP = parseFloat(els.power.value);
+  const actual = applyArm(aimA, aimP, S.bias, Math.random(), Math.random());
+  const shot = computeShot(actual.angle, actual.power, S.wind);
+  anim = { t0: performance.now(), shot: shot, actual: actual, aw: S.wind * 1.2 / shot.flight, aim: { angle: aimA, power: aimP } };
+  resetTrail();
+  els.throwBtn.disabled = true;
+}
+function finishThrow(){
+  const a = anim; anim = null;
+  els.throwBtn.disabled = false;
+  const landing = a.shot.range;
+  ball.position.set(landing, 0.35, 0);
+  const j = judgeLanding(landing, S.target);
+  S.used++; S.score += j.points;
+  addMarker(landing, j.ring);
+  const left = MAX_BALLS - S.used;
+  let msg;
+  if (j.ring === 1) msg = "中心！ 10点";
+  else if (j.ring === 2) msg = "中の輪。5点";
+  else if (j.ring === 3) msg = "外の輪。2点";
+  else msg = "的の外。0点";
+  const errText = Math.abs(j.err).toFixed(1) + (j.err >= 0 ? "m行き過ぎ" : "m手前");
+  els.result.className = "result show";
+  els.result.innerHTML = "<strong>" + fmt(landing) + "m</strong> に落ちた（的まで " + errText + "）：" + msg +
+    "<br>実際は 角度" + fmt(a.actual.angle) + "度・強さ" + fmt(a.actual.power) + "% で抜けた（狙いは " + a.aim.angle + "度・" + a.aim.power + "%）";
+  addLog(S.used + "球目：" + fmt(landing) + "m／" + j.points + "点（実際 " + fmt(a.actual.angle) + "度・" + fmt(a.actual.power) + "%）");
+  if (j.points > 0 && left > 0){
+    if (S.target < DIST_CAP){
+      S.target = Math.round(relocateDistance(S.target, Math.random()) * 10) / 10;
+      if (targetGroup) targetGroup.position.set(S.target, 0, 0);
+      S.first = false;
+      addLog("的が遠ざかった。次の距離は見た目で読む。");
+    } else {
+      addLog("的はもうこれ以上離れない。");
+    }
+  }
+  if (left <= 0){
+    S.over = true;
+    els.result.innerHTML += "<br><strong>10球おしまい。合計 " + S.score + "点。</strong>（最後の的は " + fmt(S.target) + "m だった）";
+    addLog("終了。合計 " + S.score + "点。");
+    saveBest();
+  }
+  updatePanel();
+}
+function bindPair(r, n){
+  r.addEventListener("input", function(){ n.value = r.value; });
+  n.addEventListener("change", function(){ r.value = n.value; });
+}
+bindPair(els.angle, els.angleNum);
+bindPair(els.power, els.powerNum);
+els.throwBtn.addEventListener("click", doThrow);
+els.newBtn.addEventListener("click", function(){ if (!anim) newGame(); });
+
+try {
+  if (typeof THREE === "undefined") throw new Error("no three");
+  initView();
+  newGame();
+} catch(e) {
+  els.viewInfo.textContent = "3Dの読み込みに失敗した。ネット接続を確認して、ページを開き直してみて。";
+}
+})();
+</script>
+</body>
+</html>
