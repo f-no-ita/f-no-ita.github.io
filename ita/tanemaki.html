@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>種まき | Fの板 一人用ことばゲーム</title>
+<style>
+  :root{
+    --bg:#f6f3ea; --paper:#fffdf6; --ink:#2f2a22; --muted:#7a7263;
+    --line:#ddd5c2; --accent:#4d7c4d; --accent-soft:#e8f0e2;
+    --bad:#b0413e; --bad-soft:#f9e9e7; --good:#2e6b34; --good-soft:#e6f3e4;
+    --warn:#8a6d1f; --warn-soft:#faf3da;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif;
+    line-height:1.7;}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}
+  header{margin-bottom:18px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:.04em}
+  h1 .leaf{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin:0}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;
+    padding:18px;margin:14px 0}
+  .card h2{font-size:16px;margin:0 0 10px}
+  .theme-name{font-size:24px;font-weight:700;margin:2px 0 8px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+  .chip{display:inline-block;padding:3px 12px;border-radius:999px;font-size:15px}
+  .chip.bad{background:var(--bad-soft);color:var(--bad);border:1px solid #e5c4c1}
+  .chip.must{background:var(--good-soft);color:var(--good);border:1px solid #c2dcc0}
+  .label{font-size:12px;color:var(--muted);letter-spacing:.08em}
+  .hint{font-size:13px;color:var(--muted);margin:8px 0 0}
+  .row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+  button{font:inherit;font-size:14px;padding:8px 16px;border-radius:8px;
+    border:1px solid var(--line);background:#fff;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.primary:hover{opacity:.92}
+  select{font:inherit;font-size:14px;padding:8px;border-radius:8px;border:1px solid var(--line);background:#fff}
+  textarea{width:100%;min-height:180px;font:inherit;font-size:16px;line-height:1.8;
+    padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;resize:vertical}
+  textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .count{font-size:13px;color:var(--muted);text-align:right;margin-top:4px}
+  .result{border-radius:10px;padding:12px 14px;font-size:15px;display:none}
+  .result.show{display:block}
+  .result.pass{background:var(--good-soft);border:1px solid #c2dcc0}
+  .result.fail{background:var(--bad-soft);border:1px solid #e5c4c1}
+  .result ul{margin:6px 0 0;padding-left:20px}
+  .records{font-size:14px}
+  .records li{margin:4px 0}
+  .records .none{color:var(--muted)}
+  details{font-size:13px;color:var(--muted)}
+  details summary{cursor:pointer;font-size:14px;color:var(--ink)}
+  code{background:#f0ebdd;padding:1px 5px;border-radius:4px;font-size:12.5px}
+  pre{background:#2f2a22;color:#f2edda;border-radius:10px;padding:12px;overflow-x:auto;font-size:12.5px;line-height:1.6}
+  footer{color:var(--muted);font-size:12.5px;margin-top:26px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="leaf">🌱</span> 種まき</h1>
+    <p class="sub">Fの板の一人用ことばゲーム。お題の制限をくぐって、短い文章をひとつ残す。</p>
+  </header>
+
+  <section class="card" aria-label="お題">
+    <div class="label">テーマ</div>
+    <div class="theme-name" id="themeName">—</div>
+    <div class="label">使ってはいけない言葉</div>
+    <div class="chips" id="forbiddenChips"></div>
+    <div class="label">必ず入れる言葉</div>
+    <div class="chips" id="requiredChip"></div>
+    <p class="hint" id="themeHint"></p>
+    <div class="row">
+      <button type="button" id="dailyBtn">今日のお題</button>
+      <button type="button" id="randomBtn">別のお題を引く</button>
+      <select id="themeSelect" aria-label="お題を選ぶ"></select>
+    </div>
+  </section>
+
+  <section class="card" aria-label="文章を書く">
+    <h2>文章を書く（60〜500文字）</h2>
+    <textarea id="textInput" placeholder="ここに短い文章を書く。テーマに一番近い言葉が使えないとき、別の景色から入ると書きやすい。"></textarea>
+    <div class="count"><span id="charCount">0</span> 文字</div>
+    <div class="row">
+      <button type="button" class="primary" id="judgeBtn">判定する</button>
+      <button type="button" id="copyBtn">文章をコピー</button>
+      <button type="button" id="clearBtn">消す</button>
+    </div>
+    <div class="result" id="resultBox" role="status"></div>
+  </section>
+
+  <section class="card records" aria-label="合格の記録">
+    <h2>合格の記録（この端末の中だけ）</h2>
+    <ul id="recordList"><li class="none">まだ無い。最初のひとつをまいてみよう。</li></ul>
+    <p class="hint">本番では、この記録が板のサーバー側に残る形になる想定。試作では端末の中にだけ残る。</p>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>判定の仕組み（作る人向け）</summary>
+      <p>判定は板のCTFと同じ流儀：文章と条件の言葉を両方 NFKC 正規化し、空白を全部取り除いて、部分一致で見る。
+      禁止の言葉が1つでも含まれていたら不合格、必須の言葉が含まれていなかったら不合格、文字数が範囲外でも不合格。</p>
+      <p>お題はこんな形のデータで持つ：</p>
+      <pre>{
+  "theme": "宇宙",
+  "forbidden": ["銀河", "太陽"],
+  "required": "星"
+}</pre>
+      <p>サーバー版の組み込み方は、同じフォルダの <code>worker-api-spec.md</code> にまとめてある。</p>
+    </details>
+  </section>
+
+  <footer>
+    Fの板 ゲーム広場の試作ページ。置き場所の想定は <code>ita/tanemaki.html</code>。
+  </footer>
+</div>
+
+<script>
+"use strict";
+const THEMES = [
+  { theme:"宇宙",   forbidden:["銀河","太陽"],   required:"星",
+    hint:"一番言いたくなる言葉を外して、光や闇の方から書く。" },
+  { theme:"海",     forbidden:["波","船"],       required:"塩",
+    hint:"水の広がりと、口に残る味の方から書く。" },
+  { theme:"森",     forbidden:["木","緑"],       required:"苔",
+    hint:"幹ではなく、足元の湿り気の方から書く。" },
+  { theme:"雨の日", forbidden:["傘","雲"],       required:"水たまり",
+    hint:"空ではなく、足元に映る景色の方から書く。" },
+  { theme:"台所",   forbidden:["包丁","鍋"],     required:"湯気",
+    hint:"切る道具ではなく、立ちのぼる白さの方から書く。" },
+  { theme:"図書室", forbidden:["本","紙"],       required:"静けさ",
+    hint:"背の高い棚と、人の気配の薄さの方から書く。" },
+  { theme:"駅",     forbidden:["電車","切符"],   required:"放送",
+    hint:"乗り物そのものではなく、人の流れと声の方から書く。" },
+  { theme:"冬の朝", forbidden:["雪","寒い"],     required:"息",
+    hint:"白いものではなく、口から出る白さの方から書く。" },
+  { theme:"猫",     forbidden:["毛","しっぽ"],   required:"窓",
+    hint:"体ではなく、いた場所の温もりの方から書く。" },
+  { theme:"工場",   forbidden:["機械","煙"],     required:"手",
+    hint:"装置ではなく、働く人の所作の方から書く。" },
+  { theme:"記憶",   forbidden:["思い出","昔"],   required:"名前",
+    hint:"過去という言葉ではなく、呼ばれたときの響きの方から書く。" },
+  { theme:"未来",   forbidden:["夢","希望"],     required:"約束",
+    hint:"願いという言葉ではなく、交わした言葉の方から書く。" }
+];
+const MIN_LEN = 60, MAX_LEN = 500;
+const STORE_KEY = "tanemaki_passes_v1";
+
+const $ = (id) => document.getElementById(id);
+const themeName = $("themeName"), forbiddenChips = $("forbiddenChips"),
+      requiredChip = $("requiredChip"), themeHint = $("themeHint"),
+      themeSelect = $("themeSelect"), textInput = $("textInput"),
+      charCount = $("charCount"), resultBox = $("resultBox"),
+      recordList = $("recordList");
+
+let current = 0;
+
+function normalize(s){
+  return (s || "").normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+}
+function charLen(s){ return Array.from(s || "").length; }
+
+function renderTheme(){
+  const t = THEMES[current];
+  themeName.textContent = t.theme;
+  forbiddenChips.innerHTML = "";
+  t.forbidden.forEach(w => {
+    const el = document.createElement("span");
+    el.className = "chip bad"; el.textContent = w;
+    forbiddenChips.appendChild(el);
+  });
+  requiredChip.innerHTML = "";
+  const req = document.createElement("span");
+  req.className = "chip must"; req.textContent = t.required;
+  requiredChip.appendChild(req);
+  themeHint.textContent = "書き方のコツ：" + t.hint;
+  themeSelect.value = String(current);
+  hideResult();
+}
+function hideResult(){
+  resultBox.className = "result"; resultBox.innerHTML = "";
+}
+function judge(){
+  const t = THEMES[current];
+  const text = textInput.value;
+  const norm = normalize(text);
+  const problems = [];
+  const hits = t.forbidden.filter(w => norm.includes(normalize(w)));
+  if (hits.length) problems.push("使ってはいけない言葉が入っている：" + hits.join("、"));
+  if (!norm.includes(normalize(t.required)))
+    problems.push("必ず入れる言葉「" + t.required + "」が入っていない");
+  const n = charLen(text);
+  if (n < MIN_LEN) problems.push("文字数が足りない（今 " + n + " 文字、" + MIN_LEN + " 文字から）");
+  if (n > MAX_LEN) problems.push("文字数が多い（今 " + n + " 文字、" + MAX_LEN + " 文字まで）");
+
+  resultBox.classList.add("show");
+  if (problems.length === 0){
+    resultBox.classList.add("pass");
+    resultBox.innerHTML = "🌱 <strong>合格。</strong>種がひとつ、まけた。"
+      + "<ul><li>テーマ「" + t.theme + "」／" + n + " 文字</li></ul>";
+    saveRecord(t, n);
+  } else {
+    resultBox.classList.add("fail");
+    resultBox.innerHTML = "<strong>まだ土の中。</strong>直す所はここ："
+      + "<ul>" + problems.map(p => "<li>" + p + "</li>").join("") + "</ul>";
+  }
+}
+function loadRecords(){
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); }
+  catch(e){ return []; }
+}
+function saveRecord(t, n){
+  const recs = loadRecords();
+  recs.unshift({ at:new Date().toLocaleString("ja-JP"), theme:t.theme, chars:n });
+  localStorage.setItem(STORE_KEY, JSON.stringify(recs.slice(0, 20)));
+  renderRecords();
+}
+function renderRecords(){
+  const recs = loadRecords();
+  recordList.innerHTML = "";
+  if (!recs.length){
+    recordList.innerHTML = '<li class="none">まだ無い。最初のひとつをまいてみよう。</li>';
+    return;
+  }
+  recs.forEach(r => {
+    const li = document.createElement("li");
+    li.textContent = r.at + "　テーマ「" + r.theme + "」／" + r.chars + " 文字";
+    recordList.appendChild(li);
+  });
+}
+
+THEMES.forEach((t, i) => {
+  const opt = document.createElement("option");
+  opt.value = String(i); opt.textContent = t.theme;
+  themeSelect.appendChild(opt);
+});
+themeSelect.addEventListener("change", () => { current = Number(themeSelect.value); renderTheme(); });
+$("dailyBtn").addEventListener("click", () => {
+  current = Math.floor(Date.now() / 86400000) % THEMES.length;
+  renderTheme();
+});
+$("randomBtn").addEventListener("click", () => {
+  let next = current;
+  while (next === current) next = Math.floor(Math.random() * THEMES.length);
+  current = next; renderTheme();
+});
+$("judgeBtn").addEventListener("click", judge);
+$("clearBtn").addEventListener("click", () => {
+  textInput.value = ""; charCount.textContent = "0"; hideResult(); textInput.focus();
+});
+$("copyBtn").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(textInput.value); }
+  catch(e){ textInput.select(); document.execCommand("copy"); }
+});
+textInput.addEventListener("input", () => {
+  charCount.textContent = String(charLen(textInput.value));
+});
+
+current = Math.floor(Date.now() / 86400000) % THEMES.length;
+renderTheme();
+renderRecords();
+</script>
+</body>
+</html>
