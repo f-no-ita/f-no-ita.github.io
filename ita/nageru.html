@@ -40,7 +40,7 @@
 <div class="wrap">
   <header>
     <h1>🎯 なげる</h1>
-    <p class="sub">投げる系ゲームの二段目（向き開放）。的は同心円3つ。10球の合計点で競う。</p>
+    <p class="sub">投げる系ゲームの二段目（向き開放）。的は同心円3つ。10球の合計点で競う。AIのプレイも見られる。</p>
   </header>
   <main>
     <section class="panel">
@@ -50,6 +50,18 @@
         <p>残り <strong id="balls">10</strong> 球 ／ 合計 <strong id="score">0</strong> 点 <span id="best" class="muted"></span></p>
         <div class="row">
           <button type="button" id="camBtn">カメラ：横から</button>
+        </div>
+        <div class="row">
+          <button type="button" id="botBtn">AIのプレイを見る（デモ）</button>
+        </div>
+        <div class="row">
+          <span class="muted">観戦（本物のAIの試合記録を読む）：</span>
+        </div>
+        <div class="row">
+          <input type="file" id="replayFile" accept=".json,application/json" style="font-size:12px;max-width:100%">
+        </div>
+        <div class="row">
+          <button type="button" id="replayBtn" disabled>記録を再生する</button>
         </div>
       </div>
       <div class="card">
@@ -139,8 +151,60 @@ function windText(w){
   const s = Math.abs(w) < 1.6 ? "弱い" : "やや強い";
   return s + (w > 0 ? "追い風" : "向かい風");
 }
+function windEstimateFromText(t){
+  if (t === "ほぼ無風") return 0;
+  const v = t.indexOf("やや強い") === 0 ? 2.05 : 1.15;
+  return t.indexOf("追い風") >= 0 ? v : -v;
+}
+function createBot(){
+  let known = null, windEst = 0, offsets = [], phase = 1, p2dist = null, lastLatSign = 1;
+  function start(firstDist, wText){
+    known = { dist: firstDist, lat: 0 };
+    windEst = windEstimateFromText(wText);
+    offsets = []; phase = 1; p2dist = null; lastLatSign = 1;
+  }
+  function avg(){
+    if (!offsets.length) return { angle: 0, power: 0, heading: 0 };
+    const xs = offsets.slice(-5);
+    const sum = xs.reduce(function(a, o){ return { angle: a.angle + o.angle, power: a.power + o.power, heading: a.heading + o.heading }; }, { angle: 0, power: 0, heading: 0 });
+    return { angle: sum.angle / xs.length, power: sum.power / xs.length, heading: sum.heading / xs.length };
+  }
+  function clamp(x, lo, hi){ return Math.min(hi, Math.max(lo, x)); }
+  function aim(){
+    const heading = Math.atan2(known.lat, known.dist) * 180 / Math.PI;
+    const need = Math.sqrt(known.dist * known.dist + known.lat * known.lat);
+    let v = Math.sqrt(need * G);
+    for (let i = 0; i < 3; i++){
+      const flight = 2 * v * Math.SQRT1_2 / G;
+      v = Math.sqrt(Math.max(20, (need - windEst * flight * 0.6) * G));
+    }
+    const off = avg();
+    return {
+      angle: Math.round(clamp(45 - off.angle, 25, 65) * 10) / 10,
+      power: Math.round(clamp(v / V_PER - off.power, 10, 100) * 10) / 10,
+      heading: Math.round(clamp(heading - off.heading, -40, 40) * 10) / 10
+    };
+  }
+  function learn(res, aimUsed){
+    offsets.push({ angle: res.actual.angle - aimUsed.angle, power: res.actual.power - aimUsed.power, heading: res.actual.heading - aimUsed.heading });
+    const kd = res.fwd - res.errF, kl = res.lat - res.errL;
+    if (kl !== 0) lastLatSign = kl > 0 ? 1 : -1;
+    if (res.points > 0){
+      if (phase === 1){
+        if (kd < DIST_CAP) known = { dist: Math.min(kd + 10, DIST_CAP), lat: 0 };
+        else { phase = 2; p2dist = null; known = { dist: 25, lat: 0 }; }
+      } else {
+        if (p2dist === null) p2dist = kd;
+        known = { dist: p2dist, lat: kl + lastLatSign * 5.5 };
+      }
+    } else {
+      known = { dist: kd, lat: kl };
+    }
+  }
+  return { start: start, aim: aim, learn: learn };
+}
 if (typeof module !== "undefined" && module.exports){
-  module.exports = { computeShot, computeShot2, judge2, relocateTarget, rollArmBias, applyArm, applyHeading, windText, RINGS, MAX_BALLS, DIST_CAP, LAT_CAP };
+  module.exports = { computeShot, computeShot2, judge2, relocateTarget, rollArmBias, applyArm, applyHeading, windText, windEstimateFromText, createBot, RINGS, MAX_BALLS, DIST_CAP, LAT_CAP };
 }
 </script>
 <script>
@@ -148,7 +212,7 @@ if (typeof module !== "undefined" && module.exports){
 "use strict";
 const $ = function(id){ return document.getElementById(id); };
 const els = { view: $("view"), angle: $("angle"), angleNum: $("angleNum"), power: $("power"), powerNum: $("powerNum"),
-  heading: $("heading"), headingNum: $("headingNum"), throwBtn: $("throwBtn"), newBtn: $("newBtn"), camBtn: $("camBtn"),
+  heading: $("heading"), headingNum: $("headingNum"), throwBtn: $("throwBtn"), newBtn: $("newBtn"), camBtn: $("camBtn"), botBtn: $("botBtn"), replayFile: $("replayFile"), replayBtn: $("replayBtn"),
   viewInfo: $("viewInfo"), score: $("score"), balls: $("balls"), log: $("log"), best: $("best"), result: $("result") };
 
 let S = null;
@@ -305,7 +369,7 @@ function tick(){
   if (anim){
     const t = (performance.now() - anim.t0) / 1000;
     if (t >= anim.shot.flight){
-      finishThrow();
+      if (anim.replay) finishReplayThrow(); else finishThrow();
     } else {
       const th = anim.actual.angle * Math.PI / 180, v = anim.actual.power * V_PER;
       const k = t / anim.shot.flight;
@@ -317,7 +381,7 @@ function tick(){
   if (renderer) renderer.render(scene, camera);
 }
 function doThrow(){
-  if (!S || S.over || anim) return;
+  if (!S || S.over || anim || S.replaying) return;
   const aimA = parseFloat(els.angle.value), aimP = parseFloat(els.power.value), aimH = parseFloat(els.heading.value);
   const actual = applyArm(aimA, aimP, S.bias, Math.random(), Math.random());
   actual.heading = applyHeading(aimH, Math.random());
@@ -332,6 +396,8 @@ function finishThrow(){
   const fwd = a.shot.fwd, lat = a.shot.lat;
   ball.position.set(fwd, 0.35, lat);
   const j = judge2(fwd, lat, S.target);
+  window.__lastResult = { fwd: fwd, lat: lat, errF: j.errF, errL: j.errL, points: j.points,
+    actual: { angle: a.actual.angle, power: a.actual.power, heading: a.actual.heading } };
   S.used++; S.score += j.points;
   addMarker(fwd, lat, j.ring);
   const left = MAX_BALLS - S.used;
@@ -374,8 +440,125 @@ bindPair(els.angle, els.angleNum);
 bindPair(els.power, els.powerNum);
 bindPair(els.heading, els.headingNum);
 els.throwBtn.addEventListener("click", doThrow);
-els.newBtn.addEventListener("click", function(){ if (!anim) newGame(); });
+els.newBtn.addEventListener("click", function(){ if (!anim){ stopBot(); if (replayTimer) clearTimeout(replayTimer); replayTimer = null; newGame(); } });
 els.camBtn.addEventListener("click", function(){ setCam(camMode === "side" ? "back" : "side"); });
+
+let replay = null, replayIdx = 0, replayTimer = null;
+function loadReplayData(data){
+  if (!data || !Array.isArray(data.throws) || !data.throws.length) return false;
+  replay = data;
+  els.replayBtn.disabled = false;
+  return true;
+}
+els.replayFile.addEventListener("change", function(){
+  const f = els.replayFile.files && els.replayFile.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = function(){
+    try {
+      const data = JSON.parse(reader.result);
+      if (loadReplayData(data)) addLog("試合記録を読み込んだ（" + (data.player || "AI") + "、" + data.throws.length + "球）。");
+      else addLog("記録の形が違うみたい。");
+    } catch(e){ addLog("記録が読めなかった。"); }
+  };
+  reader.readAsText(f);
+});
+function startReplay(){
+  if (!replay || anim) return;
+  stopBot();
+  S = { target: { dist: replay.throws[0].target.dist, lat: replay.throws[0].target.lat, phase: replay.throws[0].target.phase },
+    wind: 0, bias: { angle: 0, power: 0 }, used: 0, score: 0, first: true, over: false, replaying: true };
+  clearMarkers(); resetTrail(); moveTarget();
+  if (ball) ball.position.set(0, 0.35, 0);
+  setCam("side");
+  els.log.innerHTML = "";
+  els.result.className = "result"; els.result.innerHTML = "";
+  els.viewInfo.textContent = "観戦中：" + (replay.player || "AI") + " の試合（風は" + (replay.windText || "不明") + "）";
+  els.balls.textContent = String(replay.throws.length);
+  els.score.textContent = "0";
+  addLog((replay.player || "AI") + " の試合を再生する。");
+  replayIdx = 0;
+  replayTimer = setTimeout(nextReplayThrow, 900);
+}
+function nextReplayThrow(){
+  if (!replay) return;
+  if (replayIdx >= replay.throws.length){
+    addLog("再生おしまい。合計 " + S.score + " 点だった。");
+    if (S) S.replaying = false;
+    return;
+  }
+  const th = replay.throws[replayIdx];
+  S.target = { dist: th.target.dist, lat: th.target.lat, phase: th.target.phase };
+  moveTarget();
+  if (th.target.phase === 2 && camMode === "side") setCam("back");
+  els.angle.value = String(th.aim.angle); els.angleNum.value = String(th.aim.angle);
+  els.power.value = String(th.aim.power); els.powerNum.value = String(th.aim.power);
+  els.heading.value = String(th.aim.heading); els.headingNum.value = String(th.aim.heading);
+  const shot = computeShot2(th.actual.angle, th.actual.power, 0, th.actual.heading);
+  shot.fwd = th.fwd; shot.lat = th.lat;
+  anim = { t0: performance.now(), shot: shot, actual: th.actual, replay: true, rec: th };
+  resetTrail();
+}
+function finishReplayThrow(){
+  const th = anim.rec; anim = null;
+  ball.position.set(th.fwd, 0.35, th.lat);
+  const j = judge2(th.fwd, th.lat, th.target);
+  addMarker(th.fwd, th.lat, j.ring);
+  S.used++; S.score += th.points;
+  let msg;
+  if (j.ring === 1) msg = "中心！ 10点";
+  else if (j.ring === 2) msg = "中の輪。5点";
+  else if (j.ring === 3) msg = "外の輪。2点";
+  else msg = "的の外。0点";
+  const errFText = Math.abs(j.errF).toFixed(1) + (j.errF >= 0 ? "m行き過ぎ" : "m手前");
+  const errLText = Math.abs(j.errL) < 0.05 ? "左右は合っている" : Math.abs(j.errL).toFixed(1) + (j.errL > 0 ? "m右" : "m左");
+  els.result.className = "result show";
+  els.result.innerHTML = "的まで " + errFText + "・" + errLText + "：" + msg +
+    "<br>実際は 角度" + th.actual.angle.toFixed(1) + "度・強さ" + th.actual.power.toFixed(1) + "%・向き" + th.actual.heading.toFixed(1) +
+    "度（狙いは " + th.aim.angle + "度・" + th.aim.power + "%・" + th.aim.heading + "度）";
+  addLog((replayIdx + 1) + "球目：" + th.points + "点");
+  els.balls.textContent = String(replay.throws.length - S.used);
+  els.score.textContent = String(S.score);
+  replayIdx++;
+  replayTimer = setTimeout(nextReplayThrow, 1100);
+}
+els.replayBtn.addEventListener("click", startReplay);
+
+let bot = null, botTimer = null, botAimUsed = null;
+function stopBot(){
+  if (botTimer) clearTimeout(botTimer);
+  botTimer = null; bot = null;
+  if (els.botBtn) els.botBtn.textContent = "AIのプレイを見る";
+}
+function startBot(){
+  if (replayTimer) clearTimeout(replayTimer);
+  replayTimer = null;
+  newGame();
+  bot = createBot();
+  bot.start(S.target.dist, windText(S.wind));
+  els.botBtn.textContent = "AIプレイを止める";
+  addLog("AIが投げ始めた。見ててね。");
+  botTimer = setTimeout(botStep, 900);
+}
+function botStep(){
+  if (!bot) return;
+  if (S.over){ addLog("AIのゲーム終了。合計 " + S.score + " 点。"); stopBot(); return; }
+  if (anim){ botTimer = setTimeout(botStep, 300); return; }
+  const aim = bot.aim();
+  botAimUsed = aim;
+  els.angle.value = String(aim.angle); els.angleNum.value = String(aim.angle);
+  els.power.value = String(aim.power); els.powerNum.value = String(aim.power);
+  els.heading.value = String(aim.heading); els.headingNum.value = String(aim.heading);
+  doThrow();
+  botTimer = setTimeout(botLearn, 500);
+}
+function botLearn(){
+  if (!bot) return;
+  if (anim){ botTimer = setTimeout(botLearn, 300); return; }
+  if (window.__lastResult) bot.learn(window.__lastResult, botAimUsed);
+  botTimer = setTimeout(botStep, 1000);
+}
+els.botBtn.addEventListener("click", function(){ if (anim) return; if (bot) stopBot(); else startBot(); });
 
 try {
   if (typeof THREE === "undefined") throw new Error("no three");
@@ -384,6 +567,14 @@ try {
 } catch(e) {
   els.viewInfo.textContent = "3Dの読み込みに失敗した。ネット接続を確認して、ページを開き直してみて。";
 }
+(function(){
+  const m = /[?&]game=([A-Za-z0-9_-]+)/.exec(location.search || "");
+  if (!m) return;
+  fetch("https://fnoita-board.mogumogu7la001.workers.dev/api/nageru/games/" + m[1])
+    .then(function(r){ return r.json(); })
+    .then(function(data){ if (loadReplayData(data)) startReplay(); })
+    .catch(function(){});
+})();
 })();
 </script>
 </body>
