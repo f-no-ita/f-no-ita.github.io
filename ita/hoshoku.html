@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>捕食ゲーム v1 | トンボ vs 蝶々</title>
+<style>
+  body{margin:0;background:#0a0f0a;color:#cfd8cf;font-family:'MS PGothic',monospace;display:flex;justify-content:center;padding:14px}
+  .wrap{max-width:920px;width:100%}
+  h1{font-size:15px;color:#7ee787;margin:0 0 4px}
+  .sub{font-size:11px;color:#5a6e5a;margin:0 0 10px;line-height:1.7}
+  #hud{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;background:#060e06;border:1px solid #1a3a1a;border-radius:8px;padding:8px 12px;margin-bottom:8px}
+  #hud b{color:#7ee787}
+  #stage{position:relative}
+  canvas{background:#0d1a10;border:1px solid #1a3a1a;border-radius:8px;width:100%;height:auto;display:block;touch-action:none}
+  #msg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(4,8,4,.72);border-radius:8px;text-align:center;padding:20px}
+  #msg .big{font-size:22px;color:#7ee787;margin-bottom:8px}
+  #msg .small{font-size:12px;color:#9db89d;line-height:1.8}
+  button{background:#166534;color:#86efac;border:none;border-radius:6px;padding:8px 18px;font-size:12px;font-family:inherit;cursor:pointer}
+  button:hover{background:#15803d}
+  #log{background:#040804;border:1px solid #12260f;border-radius:8px;padding:8px 12px;font-size:11px;height:110px;overflow-y:auto;line-height:1.7;color:#7a9a7a;margin-top:8px}
+  #log .sense{color:#ffd479}
+  #log .event{color:#7ee787}
+  .row{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
+  .hint{font-size:10px;color:#476347}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🦋 捕食ゲーム v1 ― トンボ vs 蝶々</h1>
+  <p class="sub">キミはトンボ。蝶々が花7カ所の蜜を全部取る前に捕まえる。<br>
+  トンボの目は段階的：<b style="color:#ffd479">遠くでは「動き」だけ、中距離で「色」、近くで「形」</b>が見える。
+  蝶々は羽と同じ色の花に止まると中距離では消える（擬態）。止まれば遠くでは消える。<br>
+  ゆっくり近づくと気づかれにくい。速く近づくと逃げられる。蜜を吸っている間は蝶々の感知が鈍る。</p>
+  <div id="hud">
+    <span>残り時間 <b id="hudTime">150</b> 秒</span>
+    <span>蜜 <b id="hudNectar">0 / 7</b></span>
+    <span>蝶々の色 <b id="hudColor">？</b></span>
+    <span>感知 <b id="hudSense">―</b></span>
+  </div>
+  <div id="stage">
+    <canvas id="cv" width="900" height="600"></canvas>
+    <div id="msg"><div class="big" id="msgBig"></div><div class="small" id="msgSmall"></div></div>
+  </div>
+  <div class="row">
+    <button id="btnStart">スタート / リスタート</button>
+    <span class="hint">操作：ポインタ（指）でトンボを誘導 ／ クリック or スペースでダッシュ（2.5秒に1回）</span>
+  </div>
+  <div id="log"></div>
+</div>
+<script>
+'use strict';
+// ---------- 基本 ----------
+const W = 900, H = 600;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const FLOWER_COLORS = ['#e5484d', '#f5f0e6', '#f7ce46']; // 赤・白・黄
+const COLOR_NAMES = ['赤', '白', '黄'];
+const N_FLOWERS = 7;
+const TIME_LIMIT = 150;
+const DRINK_TIME = 3.0;
+const CATCH_DIST = 26;
+const FAR_R = 260, NEAR_R = 130;
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let rng = mulberry32(Date.now() % 2147483647);
+const rand = (a,b)=>a+rng()*(b-a);
+const dist = (a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+// ---------- 状態 ----------
+let flowers=[], butterfly=null, dragonfly=null;
+let timeLeft=TIME_LIMIT, running=false, over=false, lastTs=0;
+let pointer={x:W/2,y:H/2,down:false};
+let dashCd=0, logEl=document.getElementById('log');
+let senseState='none'; // none | motion | color | shape
+
+function log(text, cls){
+  const div=document.createElement('div');
+  if(cls) div.className=cls;
+  div.textContent=text;
+  logEl.appendChild(div);
+  logEl.scrollTop=logEl.scrollHeight;
+  while(logEl.children.length>60) logEl.removeChild(logEl.firstChild);
+}
+
+function setup(){
+  rng = mulberry32((Date.now()%2147483647)|0);
+  flowers=[];
+  let tries=0;
+  while(flowers.length<N_FLOWERS && tries<500){
+    tries++;
+    const p={x:rand(70,W-70), y:rand(80,H-70)};
+    if(flowers.every(f=>Math.hypot(f.x-p.x,f.y-p.y)>130)){
+      flowers.push({x:p.x,y:p.y,color:flowers.length%3,nectar:1});
+    }
+  }
+  // 色の偏りをならす（赤白黄が最低2つずつ程度になるよう並べ替え）
+  flowers.forEach((f,i)=>f.color=i%3);
+  const bc = Math.floor(rand(0,3));
+  butterfly={
+    x:rand(100,W-100), y:rand(100,H-100), vx:0, vy:0,
+    color:bc, state:'fly', target:null, drinkT:0, sitFlower:null,
+    wob:rand(0,Math.PI*2), fleeT:0, hideFlower:null
+  };
+  dragonfly={x:W/2,y:H-80,vx:0,vy:0,speed:0,dashT:0};
+  timeLeft=TIME_LIMIT; over=false; dashCd=0; senseState='none';
+  document.getElementById('hudColor').textContent='？';
+  document.getElementById('msg').style.display='none';
+  logEl.innerHTML='';
+  log('狩り開始。蝶々はどこかで飛んでいる。動きを探せ。','event');
+}
+
+function pickTarget(){
+  const rest=flowers.filter(f=>f.nectar>0);
+  if(!rest.length) return null;
+  rest.sort((a,b)=>Math.hypot(a.x-butterfly.x,a.y-butterfly.y)-Math.hypot(b.x-butterfly.x,b.y-butterfly.y));
+  // たまに遠くの花を選んで軌道を読みにくくする
+  return (rng()<0.3 && rest.length>1) ? rest[Math.floor(rand(0,rest.length))] : rest[0];
+}
+
+function butterflyThreatened(){
+  const d=dist(butterfly,dragonfly);
+  const drinking = butterfly.state==='drink';
+  const loud = dragonfly.dashT>0 ? 1.6 : 1.0;
+  const fastR=(drinking?90:150)*loud, slowR=(drinking?45:70)*loud;
+  if(d<fastR && dragonfly.speed>150) return 'fast';
+  if(d<slowR) return 'close';
+  return null;
+}
+
+function updateButterfly(dt){
+  const b=butterfly;
+  const threat=butterflyThreatened();
+  if(threat && b.state!=='flee'){
+    // 近くの「合う色の花」があれば、そこへ隠れに行く
+    const safe=flowers.filter(f=>f.color===b.color)
+      .sort((a,c)=>Math.hypot(a.x-b.x,a.y-b.y)-Math.hypot(c.x-b.x,c.y-b.y))[0];
+    if(safe && Math.hypot(safe.x-b.x,safe.y-b.y)<200 && b.sitFlower!==safe){
+      b.state='hide'; b.hideFlower=safe; b.target=safe;
+    }else{
+      b.state='flee'; b.fleeT=rand(0.7,1.3);
+    }
+    b.drinkT=0; b.sitFlower=null;
+  }
+  if(b.state==='flee'){
+    b.fleeT-=dt;
+    const away={x:b.x+(b.x-dragonfly.x), y:b.y+(b.y-dragonfly.y)};
+    flyTo(away,195,dt,true);
+    if(b.fleeT<=0 && !butterflyThreatened()){ b.state='fly'; b.target=null; }
+    return;
+  }
+  if(b.state==='hide'){
+    const f=b.hideFlower;
+    if(!f){ b.state='fly'; return; }
+    if(Math.hypot(f.x-b.x,f.y-b.y)<8){
+      b.x=f.x; b.y=f.y; b.vx=0; b.vy=0;
+      if(!butterflyThreatened() && dist(b,dragonfly)>FAR_R*0.92){ b.state='fly'; b.target=null; b.hideFlower=null; }
+    }else flyTo(f,165,dt,true);
+    return;
+  }
+  if(b.state==='drink'){
+    const f=b.sitFlower;
+    b.drinkT+=dt;
+    if(b.drinkT>=DRINK_TIME){
+      f.nectar=0; b.state='fly'; b.target=null; b.sitFlower=null;
+      log('どこかの花の蜜が取られた。残り ' + flowers.filter(x=>x.nectar>0).length + ' カ所。','event');
+      if(flowers.every(x=>x.nectar<=0)) endGame(false);
+    }
+    return;
+  }
+  // fly
+  if(!b.target || b.target.nectar<=0) b.target=pickTarget();
+  if(!b.target) return;
+  const t=b.target;
+  if(Math.hypot(t.x-b.x,t.y-b.y)<9){
+    b.x=t.x; b.y=t.y; b.vx=0; b.vy=0;
+    b.state='drink'; b.sitFlower=t; b.drinkT=0;
+  }else flyTo(t,122,dt,true);
+}
+
+function flyTo(target,speed,dt,wobble){
+  const b=butterfly;
+  const dx=target.x-b.x, dy=target.y-b.y, d=Math.hypot(dx,dy)||1;
+  let mx=dx/d, my=dy/d;
+  if(wobble){
+    b.wob+=dt*7;
+    const s=Math.sin(b.wob)*0.75;
+    const px=-my, py=mx;
+    mx+=px*s; my+=py*s;
+    const m=Math.hypot(mx,my)||1; mx/=m; my/=m;
+  }
+  b.vx=mx*speed; b.vy=my*speed;
+  b.x=clamp(b.x+b.vx*dt,14,W-14);
+  b.y=clamp(b.y+b.vy*dt,14,H-14);
+}
+
+function updateDragonfly(dt){
+  const d=dragonfly;
+  dashCd=Math.max(0,dashCd-dt);
+  d.dashT=Math.max(0,d.dashT-dt);
+  const dx=pointer.x-d.x, dy=pointer.y-d.y, dd=Math.hypot(dx,dy);
+  const cap = d.dashT>0 ? 540 : 252;
+  const want = dd<4 ? 0 : Math.min(cap, dd*4.2);
+  const tx = dd<4?0:(dx/dd)*want, ty = dd<4?0:(dy/dd)*want;
+  const k = 1-Math.pow(0.0001, dt); // なめらかな追従
+  d.vx += (tx-d.vx)*k; d.vy += (ty-d.vy)*k;
+  d.x=clamp(d.x+d.vx*dt,12,W-12);
+  d.y=clamp(d.y+d.vy*dt,12,H-12);
+  d.speed=Math.hypot(d.vx,d.vy);
+  if(pointer.down) tryDash();
+}
+
+function tryDash(){
+  if(dashCd<=0 && running && !over){
+    dragonfly.dashT=0.35; dashCd=2.5;
+  }
+  pointer.down=false;
+}
+
+// ---------- 感知（トンボの目） ----------
+function perception(){
+  const b=butterfly, d=dist(butterfly,dragonfly);
+  const moving = Math.hypot(b.vx,b.vy)>12 || b.state==='flee';
+  const sitting = !moving;
+  const onMatch = b.sitFlower && b.sitFlower.color===b.color;
+  const onHideMatch = b.state==='hide' && Math.hypot(b.vx,b.vy)<=12 && b.hideFlower && b.hideFlower.color===b.color;
+  if(d<=NEAR_R) return {level:'shape', d};
+  if(d<=FAR_R){
+    if(moving) return {level:'color', d};
+    // 止まっている時：合う色の花の上なら擬態で見えない。それ以外は色が見える
+    if(onMatch || onHideMatch) return {level:'none', d};
+    return {level:'color', d};
+  }
+  if(moving) return {level:'motion', d};
+  return {level:'none', d};
+}
+
+const SENSE_LABEL={none:'―',motion:'動き',color:'色',shape:'形'};
+function updateSense(p){
+  if(p.level!==senseState){
+    const b=butterfly;
+    if(p.level==='motion') log('感覚： 何か動いた ― ' + roughDir() + ' のほう。','sense');
+    if(p.level==='color'){
+      log('感覚： 色が解けた ― ' + COLOR_NAMES[b.color] + '。','sense');
+      document.getElementById('hudColor').textContent=COLOR_NAMES[b.color];
+    }
+    if(p.level==='shape') log('感覚： 形が見えた ― 蝶々だ。','sense');
+    senseState=p.level;
+  }
+  document.getElementById('hudSense').textContent=SENSE_LABEL[p.level];
+}
+function roughDir(){
+  const dx=butterfly.x-dragonfly.x, dy=butterfly.y-dragonfly.y;
+  const dirs=['右','右下','下','左下','左','左上','上','右上'];
+  const i=Math.round(((Math.atan2(dy,dx)*180/Math.PI)+360)/45)%8;
+  return dirs[i];
+}
+
+// ---------- 描画 ----------
+function drawFlower(f){
+  ctx.save(); ctx.translate(f.x,f.y);
+  ctx.fillStyle=FLOWER_COLORS[f.color];
+  for(let i=0;i<5;i++){
+    const a=i/5*Math.PI*2;
+    ctx.beginPath();
+    ctx.ellipse(Math.cos(a)*9,Math.sin(a)*9,7,4.5,a,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(0,0,5.5,0,Math.PI*2);
+  ctx.fillStyle = f.nectar>0 ? '#ffb340' : '#4a3a22';
+  ctx.fill();
+  ctx.restore();
+}
+function drawButterflyShape(b,alpha){
+  ctx.save(); ctx.translate(b.x,b.y); ctx.globalAlpha=alpha;
+  const flap = Math.sin(performance.now()/90)*0.5+0.7;
+  ctx.fillStyle=FLOWER_COLORS[b.color];
+  for(const s of [-1,1]){
+    ctx.beginPath();
+    ctx.ellipse(s*7,-2,8*flap+2,5, s*0.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(s*6,5,6*flap+1.5,4, s*-0.4,0,Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle='#222'; ctx.fillRect(-1.5,-6,3,12);
+  ctx.restore();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // 池（左下の背景）
+  ctx.fillStyle='#0f2436';
+  ctx.beginPath(); ctx.ellipse(120,H-60,190,80,-0.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#123048';
+  ctx.beginPath(); ctx.ellipse(110,H-70,150,55,-0.2,0,Math.PI*2); ctx.fill();
+  // 感知リング（目安）
+  ctx.strokeStyle='rgba(126,231,135,0.10)';
+  ctx.beginPath(); ctx.arc(dragonfly.x,dragonfly.y,FAR_R,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='rgba(126,231,135,0.16)';
+  ctx.beginPath(); ctx.arc(dragonfly.x,dragonfly.y,NEAR_R,0,Math.PI*2); ctx.stroke();
+  for(const f of flowers) drawFlower(f);
+  // 蝶々（感知レベルで描き分け）
+  const p=perception();
+  const b=butterfly;
+  if(p.level==='motion'){
+    ctx.fillStyle='rgba(200,200,200,0.85)';
+    ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill();
+  }else if(p.level==='color'){
+    ctx.fillStyle=FLOWER_COLORS[b.color];
+    ctx.beginPath(); ctx.arc(b.x,b.y,6,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.stroke();
+  }else if(p.level==='shape'){
+    drawButterflyShape(b,1);
+  }
+  // トンボ
+  const d=dragonfly;
+  ctx.save(); ctx.translate(d.x,d.y);
+  const ang=Math.atan2(d.vy,d.vx);
+  if(d.speed>10) ctx.rotate(ang);
+  ctx.fillStyle='rgba(160,220,255,0.5)';
+  const wf=Math.sin(performance.now()/40)*3;
+  ctx.beginPath(); ctx.ellipse(-2,-9,13,3.4,-0.5+wf*0.02,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-2,9,13,3.4,0.5-wf*0.02,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle= d.dashT>0 ? '#ffd479' : '#69b7ff';
+  ctx.beginPath(); ctx.ellipse(0,0,13,3.6,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#cfe8ff'; ctx.beginPath(); ctx.arc(11,0,3.6,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  return p;
+}
+
+// ---------- 進行 ----------
+function endGame(caught){
+  over=true; running=false;
+  const msg=document.getElementById('msg');
+  document.getElementById('msgBig').textContent = caught ? '捕まえた！トンボの勝ち' : '蝶々の勝ち';
+  document.getElementById('msgSmall').innerHTML = caught
+    ? '残り時間 ' + Math.ceil(timeLeft) + ' 秒で捕獲。蜜は ' + flowers.filter(f=>f.nectar<=0).length + ' / 7 カ所取られていた。'
+    : (flowers.every(f=>f.nectar<=0) ? '蜜を全部取られた。' : '時間切れ。蝶々が逃げ切った。') +
+      '<br>次は：吸蜜中の鈍さと、ゆっくりした接近を使ってみて。';
+  msg.style.display='flex';
+  log(caught ? '捕獲した。' : '蝶々が勝った。','event');
+}
+
+function frame(ts){
+  if(!running) return;
+  const dt=Math.min(0.05,(ts-lastTs)/1000||0.016);
+  lastTs=ts;
+  timeLeft-=dt;
+  if(timeLeft<=0){ timeLeft=0; draw(); endGame(false); return; }
+  updateButterfly(dt);
+  if(over) return;
+  updateDragonfly(dt);
+  const p=draw();
+  updateSense(p);
+  document.getElementById('hudTime').textContent=Math.ceil(timeLeft);
+  document.getElementById('hudNectar').textContent=flowers.filter(f=>f.nectar<=0).length + ' / 7';
+  if(dist(butterfly,dragonfly)<CATCH_DIST) { endGame(true); return; }
+  requestAnimationFrame(frame);
+}
+
+// ---------- 入力 ----------
+function toLocal(e){
+  const r=cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*W/r.width, y:(e.clientY-r.top)*H/r.height };
+}
+cv.addEventListener('pointermove',e=>{ pointer={...toLocal(e),down:pointer.down}; });
+cv.addEventListener('pointerdown',e=>{ pointer={...toLocal(e),down:true}; });
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); pointer.down=true; }
+});
+document.getElementById('btnStart').addEventListener('click',()=>{
+  setup(); running=true; lastTs=performance.now();
+  requestAnimationFrame(frame);
+});
+setup();
+draw();
+</script>
+</body>
+</html>
