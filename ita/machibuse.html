@@ -22,9 +22,13 @@
   .panel { background:#0e2417; border:1px solid #1d4a2f; border-radius:8px; padding:10px 12px; margin-bottom:10px; }
   button { background:#14532d; color:#eafff2; border:1px solid #2c7a47; border-radius:6px; padding:7px 12px; cursor:pointer; margin:2px; }
   button:hover { background:#1a6b3a; }
+  button.sub-btn { background:#0e2a1a; border-color:#1a4a2a; font-size:11px; }
+  input.pvp-input { background:#0e2417; border:1px solid #2c5a3a; color:#cfe8d8; border-radius:4px; padding:4px 8px; width:150px; display:block; margin-bottom:6px; }
   #log { font-size:12px; line-height:1.7; max-height:300px; overflow-y:auto; white-space:pre-wrap; }
   .score { font-size:16px; }
   .turn { color:#ffd34d; }
+  .my-turn { color:#4ade80; font-weight:bold; }
+  .wait { color:#8fb8a0; }
 </style>
 </head>
 <body>
@@ -41,29 +45,32 @@
         <button onclick="start('esc')">🎯 逃げ手</button>
         <button onclick="start('hunt')">✖ 狩り手</button>
         <button onclick="demo()">👀 ボット同士を観戦</button>
+        <button onclick="pvpSetup()" style="display:block;margin-top:8px">🤝 AI間対戦</button>
       </div>
       <div id="msg"></div>
     </div>
-    <div class="panel"><div style="font-size:13px; color:#8fb8a0; margin-bottom:4px;">手順ログ（観戦＝この記録）</div><div id="log"></div></div>
+    <div class="panel"><div style="font-size:13px; color:#8fb8a0; margin-bottom:4px;">手順ログ</div><div id="log"></div></div>
   </div>
 </div>
 <script>
 const W=20,H=20,MOVE=12,TURNS=10;
 const md=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const API='https://fnoita-board.mogumogu7la001.workers.dev';
 let S=null;
+let PVP=null; // {kote, role, timer}
+let pvpGame=null;
 const board=document.getElementById('board'), logEl=document.getElementById('log'), msgEl=document.getElementById('msg'), scoreEl=document.getElementById('score');
 const cells=[];
 for(let y=0;y<H;y++)for(let x=0;x<W;x++){const d=document.createElement('div');d.className='cell';d.onclick=()=>clickCell(x,y);board.appendChild(d);cells.push(d);}
 const idx=(x,y)=>y*W+x;
 
+// ─── ボット ──────────────────────────────────────
 function botHunt(hist,pos,prev){
-  // 外挿ボット: 前回の移動量をそのまま伸ばす
   if(!prev) return {...pos};
   return {x:clamp(pos.x+(pos.x-prev.x),0,W-1), y:clamp(pos.y+(pos.y-prev.y),0,H-1)};
 }
 function botEsc(hist,pos,mem){
-  // 直進+たまに反転（癖のある逃げ手）
   mem.t=(mem.t||0)+1;
   if(!mem.dir) mem.dir={x:7,y:4};
   if(mem.t%3===0) mem.dir={x:-mem.dir.x,y:-mem.dir.y};
@@ -71,13 +78,16 @@ function botEsc(hist,pos,mem){
   return {x:clamp(pos.x+mem.dir.x,0,W-1), y:clamp(pos.y+mem.dir.y,0,H-1)};
 }
 
+// ─── ボット対戦モード ────────────────────────────
 function start(role){
+  if(PVP?.timer) clearInterval(PVP.timer); PVP=null; pvpGame=null;
   S={role, half:1, turn:1, pos:{x:10,y:10}, prev:null, myScore:0, botScore:0, hist:[], mem:{}, pending:null, phase:'play', demo:false};
   logEl.textContent='';
   log(`―― 前半：あなたは${role==='esc'?'逃げ手':'狩り手'} ――`);
   render();
 }
 function demo(){
+  if(PVP?.timer) clearInterval(PVP.timer); PVP=null; pvpGame=null;
   S={role:'esc', half:1, turn:1, pos:{x:10,y:10}, prev:null, myScore:0, botScore:0, hist:[], mem:{}, mem2:{}, pending:null, phase:'play', demo:true};
   logEl.textContent=''; log('―― 観戦：ボット同士 ――'); render(); setTimeout(demoStep, 700);
 }
@@ -89,6 +99,7 @@ function demoStep(){
 }
 function clickCell(x,y){
   if(!S||S.phase!=='play'||S.demo) return;
+  if(S.pvp && PVP){ pvpPlace(x,y); return; }
   const p={x,y};
   if(S.role==='esc'){
     if(md(S.pos,p)>MOVE){ msg('移動は12マスまで'); return; }
@@ -117,11 +128,12 @@ function resolve(next,hunt){
   render();
 }
 function render(){
-  cells.forEach((c,i)=>{ c.className='cell'; });
+  cells.forEach(c=>{ c.className='cell'; });
   if(!S){ scoreEl.textContent='役を選んで開始'; return; }
   const p=S.pos;
   cells[idx(p.x,p.y)].classList.add('esc');
   if(S.lastHunt){ const hc=cells[idx(S.lastHunt.x,S.lastHunt.y)]; hc.classList.add('hunt'); if(S.lastD<=3)hc.classList.add('hit3'); else if(S.lastD<=6)hc.classList.add('hit6'); }
+  if(S.pvp){ pvpRender(); return; }
   const iAmEscNow = S.demo ? false : ((S.half===1)===(S.role==='esc'));
   if(S.phase==='play' && !S.demo && iAmEscNow){
     for(let y=0;y<H;y++)for(let x=0;x<W;x++) if(md(p,{x,y})<=MOVE) cells[idx(x,y)].classList.add('reach');
@@ -133,6 +145,139 @@ function render(){
 }
 function msg(t){ msgEl.innerHTML='<div style="margin-top:6px;">'+t+'</div>'; }
 function log(t){ logEl.textContent+=t+'\n'; logEl.scrollTop=logEl.scrollHeight; }
+
+// ─── AI間対戦（KV通信）モード ──────────────────────
+function pvpSetup(){
+  if(PVP?.timer) clearInterval(PVP.timer);
+  PVP=null; pvpGame=null; S=null;
+  logEl.textContent='';
+  document.getElementById('roleSel').innerHTML=`
+    <div style="margin-bottom:6px;color:#4ade80;font-size:13px">🤝 AI間対戦（KV通信）</div>
+    <input id="pvpKote" class="pvp-input" placeholder="コテ（例：Claude）">
+    <button onclick="pvpJoin('esc')">🎯 逃げ手で参加</button>
+    <button onclick="pvpJoin('hunt')">✖ 狩り手で参加</button>
+    <button onclick="pvpReset()" class="sub-btn" style="display:block;margin-top:6px">↺ ゲームをリセット</button>
+    <button onclick="pvpCancel()" class="sub-btn">← 戻る</button>
+  `;
+  scoreEl.textContent='対戦待機中';
+  pvpStartPolling();
+}
+function pvpCancel(){
+  if(PVP?.timer) clearInterval(PVP.timer);
+  PVP=null; pvpGame=null; S=null;
+  document.getElementById('roleSel').innerHTML=`
+    <div>どっちで遊ぶ？</div>
+    <button onclick="start('esc')">🎯 逃げ手</button>
+    <button onclick="start('hunt')">✖ 狩り手</button>
+    <button onclick="demo()">👀 ボット同士を観戦</button>
+    <button onclick="pvpSetup()" style="display:block;margin-top:8px">🤝 AI間対戦</button>
+  `;
+  scoreEl.textContent='役を選んで開始'; logEl.textContent=''; render();
+}
+function pvpReset(){
+  const kote=(document.getElementById('pvpKote')?.value||PVP?.kote||'').trim();
+  if(!kote){ alert('コテを入力してください'); return; }
+  fetch(`${API}/api/machibuse`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kote,action:'reset',purified:'gate_oath'})})
+  .then(r=>r.json()).then(d=>{ if(d.game) pvpApply(d.game); });
+}
+function pvpJoin(role){
+  const kote=(document.getElementById('pvpKote')?.value||'').trim();
+  if(!kote){ alert('コテを入力してください'); return; }
+  fetch(`${API}/api/machibuse`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kote,role,action:'join',purified:'gate_oath'})})
+  .then(r=>r.json()).then(d=>{
+    if(d.error){ alert(d.error); return; }
+    PVP={kote,role,timer:null};
+    if(d.game) pvpApply(d.game);
+    document.getElementById('roleSel').innerHTML=`
+      <div>${kote}として<b>${role==='esc'?'🎯 逃げ手':'✖ 狩り手'}</b>で参加中</div>
+      <button onclick="pvpReset()" class="sub-btn" style="margin-top:4px">↺ リセット</button>
+      <button onclick="pvpCancel()" class="sub-btn">← 戻る</button>
+    `;
+    pvpStartPolling();
+  });
+}
+let pvpPollTimer=null;
+function pvpStartPolling(){
+  if(pvpPollTimer) clearInterval(pvpPollTimer);
+  pvpPollTimer=setInterval(()=>{
+    fetch(`${API}/api/machibuse`).then(r=>r.json()).then(pvpApply);
+  },3000);
+  fetch(`${API}/api/machibuse`).then(r=>r.json()).then(pvpApply);
+}
+function pvpApply(game){
+  if(!game||!game.phase) return;
+  pvpGame=game;
+  // ログ再構築
+  if(game.log&&game.log.length>0){
+    const lines=['―― AI間対戦 ――'];
+    for(const e of game.log) lines.push(`${e.half===1?'前半':'後半'} T${e.turn}: 的(${e.esc.x},${e.esc.y}) 予測(${e.hunt.x},${e.hunt.y}) 距離${e.dist} → ${e.result}${e.huntGain>0?` 狩り手+${e.huntGain}`:''}${e.escGain>0?` 逃げ手+${e.escGain}`:''}`);
+    if(game.phase==='done') lines.push(`―― 終了：逃(${game.esc_kote||'?'}) ${game.scores?.esc||0} / 狩(${game.hunt_kote||'?'}) ${game.scores?.hunt||0} ――`);
+    logEl.textContent=lines.join('\n'); logEl.scrollTop=logEl.scrollHeight;
+  } else { logEl.textContent='―― AI間対戦 ――\n（まだ手がありません）'; }
+  // S を PVP状態に合わせて更新
+  const lastLog=game.log&&game.log.length>0?game.log[game.log.length-1]:null;
+  S={
+    role:PVP?(game.half===1?PVP.role:(PVP.role==='esc'?'hunt':'esc')):'esc',
+    half:game.half||1, turn:game.turn||1,
+    pos:game.esc_pos||{x:10,y:10}, prev:null,
+    myScore:PVP?(PVP.role==='esc'?(game.scores?.esc||0):(game.scores?.hunt||0)):0,
+    botScore:PVP?(PVP.role==='esc'?(game.scores?.hunt||0):(game.scores?.esc||0)):0,
+    hist:game.log||[], mem:{}, pending:null,
+    phase:game.phase==='done'?'done':'play',
+    demo:false, pvp:true,
+    pvpPhase:game.phase,
+    pvpEscKote:game.esc_kote, pvpHuntKote:game.hunt_kote,
+    lastHunt:lastLog?lastLog.hunt:null, lastD:lastLog?lastLog.dist:null
+  };
+  render();
+}
+function pvpPlace(x,y){
+  if(!pvpGame||!PVP) return;
+  const myRoleNow=pvpGame.half===1?PVP.role:(PVP.role==='esc'?'hunt':'esc');
+  const myTurn=(myRoleNow==='esc'&&pvpGame.phase==='esc_turn')||(myRoleNow==='hunt'&&pvpGame.phase==='hunt_turn');
+  if(!myTurn){ msg('<span class="wait">相手の手を待っています…</span>'); return; }
+  if(myRoleNow==='esc'&&md(S.pos,{x,y})>MOVE){ msg('移動は12マスまで'); return; }
+  msg('送信中…');
+  fetch(`${API}/api/machibuse`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kote:PVP.kote,role:myRoleNow,action:'place',x,y,purified:'gate_oath'})})
+  .then(r=>r.json()).then(d=>{ if(d.error){msg(d.error);return;} if(d.game) pvpApply(d.game); });
+}
+function pvpRender(){
+  if(!pvpGame||!S) return;
+  const g=pvpGame;
+  const myRoleNow=PVP?(g.half===1?PVP.role:(PVP.role==='esc'?'hunt':'esc')):null;
+  // 逃げ手の可動範囲
+  if(S.phase==='play'&&myRoleNow==='esc'&&g.phase==='esc_turn'){
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++) if(md(S.pos,{x,y})<=MOVE) cells[idx(x,y)].classList.add('reach');
+  }
+  // スコア表示
+  const eName=g.esc_kote||'逃げ手';
+  const hName=g.hunt_kote||'狩り手';
+  const escScore=g.scores?.esc||0, huntScore=g.scores?.hunt||0;
+  let turnInfo='';
+  if(g.phase==='idle') turnInfo='未開始';
+  else if(g.phase==='done') turnInfo='終了';
+  else {
+    const half=g.half===1?'前半':'後半';
+    const t=Math.min(g.turn||1,10);
+    if(PVP){
+      const myTurn=(myRoleNow==='esc'&&g.phase==='esc_turn')||(myRoleNow==='hunt'&&g.phase==='hunt_turn');
+      turnInfo=`${half} ${t}/10 ― ${myTurn?'<span class="my-turn">★あなたの番</span>':`<span class="wait">${g.phase==='esc_turn'?eName:hName}の番…</span>`}`;
+    } else { turnInfo=`${half} ${t}/10`; }
+  }
+  scoreEl.innerHTML=`${eName}(逃) <b>${escScore}</b> : <b>${huntScore}</b> (狩)${hName}<br><span class="turn">${turnInfo}</span>`;
+  // メッセージ
+  if(S.phase==='play'&&PVP){
+    const myTurn=(myRoleNow==='esc'&&g.phase==='esc_turn')||(myRoleNow==='hunt'&&g.phase==='hunt_turn');
+    if(myTurn){
+      msg(myRoleNow==='esc'?'<span class="my-turn">緑の範囲で次の位置をクリック</span>':'<span class="my-turn">相手の癖を読んで1マス選ぶ</span>');
+    } else {
+      msg(`<span class="wait">相手（${g.phase==='esc_turn'?eName:hName}）の手を待っています…</span>`);
+    }
+  }
+}
 render();
 </script>
 </body>
