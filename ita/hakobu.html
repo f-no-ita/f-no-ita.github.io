@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>荷物運び v2 | 2輪台車で、時間内に何個運べるか</title>
+<style>
+  :root{--bg:#eef2e6;--paper:#fffdf6;--ink:#2f2a22;--muted:#7a7263;--line:#ddd5c2;
+    --accent:#b3542e;--accent-soft:#f7e8df;--good:#2e6b34;--good-soft:#e6f3e4}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.65}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 14px 48px}
+  h1{font-size:25px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 12px}
+  main{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .panel{width:320px;flex:none;max-width:100%}
+  #view{flex:1;min-width:290px;position:relative}
+  #view canvas{display:block;border-radius:12px;width:100%}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 12px}
+  .card h2{font-size:15px;margin:0 0 6px}
+  .row{display:flex;gap:8px;margin:8px 0 2px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;font-size:14px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:default}
+  .big{font-size:20px;font-weight:700}
+  .muted{color:var(--muted);font-size:12.5px}
+  ul#log{margin:0;padding-left:18px;font-size:13px;max-height:180px;overflow:auto}
+  .result{font-size:14.5px;background:var(--accent-soft);border-radius:8px;padding:8px 10px;margin-top:10px;display:none}
+  .result.show{display:block}
+  .bar{height:10px;background:#e8e2d0;border-radius:5px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:#d9a441;width:0%}
+  .bar>i.hot{background:#c0392b}
+  #windArrow{display:inline-block;font-size:18px;transition:transform .3s}
+  #banner{position:absolute;top:16%;left:50%;transform:translateX(-50%);z-index:6;pointer-events:none;
+    font-size:30px;font-weight:700;color:#8c2b12;background:rgba(255,244,214,.93);border:2px solid #c96a1e;
+    border-radius:12px;padding:10px 22px;opacity:0;transition:opacity .25s;white-space:nowrap}
+  #banner.show{opacity:1}
+  .touch{display:none;gap:6px;position:absolute;left:8px;right:8px;bottom:8px;z-index:5;
+    grid-template-columns:repeat(3,1fr)}
+  .touch button{padding:9px 4px;font-size:14px;white-space:nowrap;overflow:hidden;
+    user-select:none;-webkit-user-select:none;touch-action:none;background:rgba(255,253,246,.82)}
+  @media (pointer:coarse){.touch{display:grid}}
+  @media (max-width:820px){
+    main{flex-direction:column}
+    #view{order:-1;width:100%;position:sticky;top:6px;z-index:4}
+    .panel{width:100%}
+  }
+  kbd{background:#eee;border:1px solid #ccc;border-radius:4px;padding:0 5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🛒 荷物運び v2</h1>
+    <p class="sub">2輪台車を押して、制限時間（180秒）内に荷物を何個届けられるか。箱はマップに散らばっていて、赤い箱は赤い家、青い箱は青い家、黄色い箱は黄色い家へ。緑のボールはどこの家でも得点。山と湖と川のあるマップ、道路は少し滑る。残り30秒になると、台風か地震のどちらかが来る。</p>
+    <p class="muted" style="margin:0 0 10px"><a href="game.html">← ゲーム広場に戻る</a></p>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="card">
+        <h2>状況</h2>
+        <p>残り時間 <span class="big" id="time">180</span> 秒 ／ 届けた <span class="big" id="delivered">0</span> / 18 個 ／ スコア <span class="big" id="score">0</span> 点 <span id="best" class="muted"></span></p>
+        <p class="muted" style="font-size:13px">🔴赤 <strong id="cntRed">0</strong>/5　🔵青 <strong id="cntBlue">0</strong>/5　🟡黄 <strong id="cntYellow">0</strong>/5　🟢ボール <strong id="cntBall">0</strong>/3</p>
+        <p>風 <span id="windArrow">➤</span> <strong id="windText">-</strong> <span class="muted">（台車とボールを押す）</span></p>
+        <p>地面：<strong id="surface">-</strong> ／ 積み荷 <strong id="load">0</strong> / 6 個 ／ 手持ち：<strong id="held">なし</strong></p>
+        <p>台車の揺れ <span class="muted">（満タンで荷物が落ちる）</span></p>
+        <div class="bar"><i id="wobble"></i></div>
+        <div class="row">
+          <button type="button" class="primary" id="startBtn">スタート</button>
+          <button type="button" id="newBtn">最初から</button>
+          <button type="button" id="camBtn">カメラ：後ろから</button>
+        </div>
+        <div class="row">
+          <button type="button" id="botBtn">AIが運ぶのを見る（デモ）</button>
+          <button type="button" id="recBtn">記録を保存（JSON）</button>
+        </div>
+        <div class="result" id="result"></div>
+      </div>
+      <div class="card">
+        <h2>操作</h2>
+        <p class="muted" style="font-size:13px">
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>／矢印：台車を押す・曲がる<br>
+          <kbd>E</kbd>：近くの荷物を台車に積む（色の合う家では自動で納品、合わない箱は積んだまま残る）<br>
+          <kbd>F</kbd>：荷物を持つ ／ もう一度で投げる（箱はダメージ）<br>
+          道路は摩擦が低くて滑る。草地は遅いが安定。水に入ると大幅減速＋箱が濡れてダメージ。橋は川を渡れる唯一の場所。スマホではボタンが3D画面の上に重なって出る。
+        </p>
+      </div>
+      <div class="card">
+        <h2>記録</h2>
+        <ul id="log"></ul>
+      </div>
+      <div class="card muted" style="font-size:12.5px">
+        荷物：赤・青・黄の箱が5個ずつ（マップに散らばっている）＋緑のボール3個。箱は色の合う家だけに届けられる。ボールはどこの家でも15点。箱は無傷10点（ダメージ分だけ減点、壊れたら0点）。積めるのは6個まで、積むほど風で揺れる。
+      </div>
+    </section>
+    <section id="view" aria-label="3Dの様子">
+      <div id="banner" aria-live="polite"></div>
+      <div class="touch" id="touch">
+        <button data-k="left">◀</button><button data-k="up">▲ 押す</button><button data-k="right">▶</button>
+        <button data-k="down">▼</button><button data-k="load">積む</button><button data-k="throw">持つ/投げる</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script id="core">
+"use strict";
+var CELL = 5, GRID = 10, HALF = 25;
+var TIME_LIMIT = 180, CART_CAPACITY = 6;
+var RIVER_HALF = 1.6;
+var SURFACES = {
+  road:   { name: "道路",   friction: 0.35, speedMul: 1.0 },
+  bridge: { name: "橋",     friction: 0.5,  speedMul: 0.9 },
+  grass:  { name: "草地",   friction: 0.7,  speedMul: 0.75 },
+  slope:  { name: "山のふもと", friction: 0.6, speedMul: 0.55 },
+  water:  { name: "水",     friction: 0.2,  speedMul: 0.3 }
+};
+var HOUSE_NAMES = { red: "赤い家", blue: "青い家", yellow: "黄色い家" };
+var FIXED_CARGO = [
+  ["red",-10,7.5],["red",0,-2.5],["red",15,2.5],["red",-2.5,-12.5],["red",10,17.5],
+  ["blue",-17.5,-7.5],["blue",-12.5,-17.5],["blue",2.5,7.5],["blue",15.5,-3.5],["blue",-7.5,2.5],
+  ["yellow",12.5,20],["yellow",-2.5,20],["yellow",7.5,-15],["yellow",0,12.5],["yellow",-15,-2.5],
+  ["green",0,0],["green",20,7.5],["green",-7.5,-12.5]
+].map(function(a){ return { kind: a[0] === "green" ? "ball" : "box", color: a[0], x: a[1], z: a[2] }; });
+var FIXED_MAP = {
+  mountain: { x: 2.5, z: -17.5, r: 7.5, peakR: 2.6, h: 3.5 },
+  lake: { x: 10, z: -7.5, r: 5.5 },
+  riverPts: [[10,-2],[12.5,5],[7.5,12.5],[5,20],[5,27]],
+  roadCells: [[1,8],[2,8],[3,8],[4,8],[5,8],[6,8],[6,7],[6,6],[7,6],[7,5],[7,4],[8,4],[8,3],[8,2],
+    [7,8],[8,8],[1,7],[1,6],[1,5],[1,4],[1,3],[1,2],[1,1]],
+  houses: [
+    { color: "red",    name: "赤い家",   x: 17.5,  z: -12.5, r: 4.2 },
+    { color: "blue",   name: "青い家",   x: -17.5, z: -17.5, r: 4.2 },
+    { color: "yellow", name: "黄色い家", x: 17.5,  z: 17.5,  r: 4.2 }
+  ],
+  start: { x: -17.5, z: 17.5 },
+  cargo: FIXED_CARGO,
+  generated: false, seed: 0
+};
+var MOUNTAIN, LAKE, RIVER_PTS, ROAD_CELLS, HOUSES, GOAL, DEPOT, CARGO_SPOTS;
+function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
+function applyMap(m){
+  var c = deepCopy(m);
+  MOUNTAIN = c.mountain; LAKE = c.lake; RIVER_PTS = c.riverPts; ROAD_CELLS = c.roadCells;
+  HOUSES = c.houses; GOAL = HOUSES[0]; DEPOT = c.start; CARGO_SPOTS = c.cargo;
+  applyMap.current = { generated: !!c.generated, seed: c.seed || 0 };
+}
+applyMap(FIXED_MAP);
+function getMap(){
+  return { mountain: MOUNTAIN, lake: LAKE, riverPts: RIVER_PTS, roadCells: ROAD_CELLS,
+    houses: HOUSES, start: DEPOT, cargo: CARGO_SPOTS,
+    generated: applyMap.current.generated, seed: applyMap.current.seed };
+}
+function cellAt(x, z){
+  return [Math.floor((x + HALF) / CELL), Math.floor((z + HALF) / CELL)];
+}
+function cellCenter(c){ return { x: c[0] * CELL - HALF + CELL / 2, z: c[1] * CELL - HALF + CELL / 2 }; }
+function isRoadCell(c, r){
+  for (var i = 0; i < ROAD_CELLS.length; i++)
+    if (ROAD_CELLS[i][0] === c && ROAD_CELLS[i][1] === r) return true;
+  return false;
+}
+function distToSeg(px, pz, ax, az, bx, bz){
+  var dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+  var t = L2 ? ((px - ax) * dx + (pz - az) * dz) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  var qx = ax + dx * t - px, qz = az + dz * t - pz;
+  return Math.sqrt(qx * qx + qz * qz);
+}
+function distToRiverPts(pts, x, z){
+  var d = 1e9;
+  for (var i = 0; i < pts.length - 1; i++)
+    d = Math.min(d, distToSeg(x, z, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]));
+  return d;
+}
+function distToRiver(x, z){ return distToRiverPts(RIVER_PTS, x, z); }
+function distToLake(x, z){ var dx = x - LAKE.x, dz = z - LAKE.z; return Math.sqrt(dx * dx + dz * dz); }
+function distToMountain(x, z){ var dx = x - MOUNTAIN.x, dz = z - MOUNTAIN.z; return Math.sqrt(dx * dx + dz * dz); }
+function surfaceAt(x, z){
+  var cell = cellAt(x, z), road = isRoadCell(cell[0], cell[1]);
+  var riverD = distToRiver(x, z);
+  if (road && riverD < RIVER_HALF + 1.2) return "bridge";
+  if (road) return "road";
+  if (distToLake(x, z) < LAKE.r || riverD < RIVER_HALF) return "water";
+  var m = distToMountain(x, z);
+  if (m < MOUNTAIN.r) return "slope";
+  return "grass";
+}
+function isBlocked(x, z){ return distToMountain(x, z) < MOUNTAIN.peakR; }
+function houseAt(x, z){
+  for (var i = 0; i < HOUSES.length; i++){
+    var dx = x - HOUSES[i].x, dz = z - HOUSES[i].z;
+    if (Math.sqrt(dx * dx + dz * dz) < HOUSES[i].r) return HOUSES[i];
+  }
+  return null;
+}
+function houseFor(item){
+  if (item.kind === "ball") return null;
+  for (var i = 0; i < HOUSES.length; i++) if (HOUSES[i].color === item.color) return HOUSES[i];
+  return null;
+}
+function canDeliver(item, house){ return item.kind === "ball" || item.color === house.color; }
+function windAt(t, base){
+  var g = Math.sin(t * 0.45) + Math.sin(t * 1.31 + 1.7) * 0.55;
+  var gust = Math.max(0, g - 0.55) * 3.2;
+  return { dir: base.dir + Math.sin(t * 0.11) * 0.35, speed: base.speed + gust, gust: gust };
+}
+function windVector(t, base){
+  var w = windAt(t, base);
+  return { x: Math.cos(w.dir) * w.speed, z: Math.sin(w.dir) * w.speed, speed: w.speed, gust: w.gust, dir: w.dir };
+}
+function throwDamage(impact){
+  if (impact <= 6) return 0;
+  return Math.min(100, Math.round((impact - 6) * 10));
+}
+function scoreItem(it){
+  if (it.kind === "ball") return 15;
+  return Math.round(10 * Math.max(0, it.hp) / 100);
+}
+function cargoDefs(){
+  return CARGO_SPOTS.map(function(s, i){
+    return { id: i, kind: s.kind, color: s.color, x: s.x, z: s.z, hp: 100 };
+  });
+}
+function roadWaypoints(){
+  return ROAD_CELLS.map(function(c){ return cellCenter(c); });
+}
+// ---------- map auto-generation (seeded, validated, fixed-map fallback) ----------
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function shuffle(arr, rnd){
+  for (var i = arr.length - 1; i > 0; i--){
+    var j = Math.floor(rnd() * (i + 1)), tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr;
+}
+function cellDist(a, b){ return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]); }
+function lPath(a, b, hFirst){
+  var cells = [], c = a[0], r = a[1];
+  cells.push([c, r]);
+  function stepH(){ while (c !== b[0]){ c += Math.sign(b[0] - c); cells.push([c, r]); } }
+  function stepV(){ while (r !== b[1]){ r += Math.sign(b[1] - r); cells.push([c, r]); } }
+  if (hFirst){ stepH(); stepV(); } else { stepV(); stepH(); }
+  return cells;
+}
+function candWater(m, x, z){
+  var dx = x - m.lake.x, dz = z - m.lake.z;
+  if (Math.sqrt(dx * dx + dz * dz) < m.lake.r) return true;
+  return distToRiverPts(m.riverPts, x, z) < RIVER_HALF;
+}
+function buildCandidate(rnd){
+  var anchors = shuffle([[8,2],[8,4],[1,2],[1,4],[4,1],[6,1],[4,8],[6,8],[1,1],[8,8],[1,8],[8,1]], rnd);
+  var picked = [];
+  for (var i = 0; i < anchors.length && picked.length < 3; i++)
+    if (picked.every(function(p){ return cellDist(p, anchors[i]) >= 3; })) picked.push(anchors[i]);
+  if (picked.length < 3) return null;
+  var colors = ["red", "blue", "yellow"];
+  var houses = picked.map(function(cell, idx){
+    var ctr = cellCenter(cell);
+    return { color: colors[idx], name: HOUSE_NAMES[colors[idx]], x: ctr.x, z: ctr.z, r: 4.2, cell: cell };
+  });
+  var startCells = shuffle([[1,8],[8,8],[1,1],[8,1],[4,8],[4,1]], rnd);
+  var startCell = null;
+  for (var s = 0; s < startCells.length; s++)
+    if (picked.every(function(p){ return cellDist(p, startCells[s]) >= 3; })){ startCell = startCells[s]; break; }
+  if (!startCell) return null;
+  var start = cellCenter(startCell);
+  // mountain: north half
+  var mCell = null;
+  for (var t1 = 0; t1 < 40 && !mCell; t1++){
+    var mc = [1 + Math.floor(rnd() * 8), Math.floor(rnd() * 5)];
+    if (picked.every(function(p){ return cellDist(p, mc) >= 2; }) && cellDist(startCell, mc) >= 2) mCell = mc;
+  }
+  if (!mCell) return null;
+  var mCtr = cellCenter(mCell);
+  var mountain = { x: mCtr.x + (rnd() * 2 - 1), z: mCtr.z + (rnd() * 2 - 1), r: 7.5, peakR: 2.6, h: 3.5 };
+  // lake: middle band
+  var lCell = null;
+  for (var t2 = 0; t2 < 40 && !lCell; t2++){
+    var lc = [2 + Math.floor(rnd() * 6), 2 + Math.floor(rnd() * 5)];
+    if (cellDist(lCell || lc, lc) >= 0 && cellDist(mCell, lc) >= 2 &&
+        picked.every(function(p){ return cellDist(p, lc) >= 2; }) && cellDist(startCell, lc) >= 2) lCell = lc;
+  }
+  if (!lCell) return null;
+  var lCtr = cellCenter(lCell);
+  var lake = { x: lCtr.x + (rnd() * 2 - 1), z: lCtr.z + (rnd() * 2 - 1), r: 5 + rnd() * 1 };
+  // river: from lake to a map edge
+  var dirs = shuffle([[0,1],[1,0],[-1,0]], rnd);
+  var riverPts = null;
+  for (var d = 0; d < dirs.length && !riverPts; d++){
+    var dir = dirs[d], pts = [[lake.x, lake.z]], cx = lake.x, cz = lake.z, ok = true;
+    for (var st = 0; st < 14; st++){
+      cx += dir[0] * 5 + (dir[0] === 0 ? (rnd() * 2 - 1) * 2.2 : 0);
+      cz += dir[1] * 5 + (dir[1] === 0 ? (rnd() * 2 - 1) * 2.2 : 0);
+      pts.push([Math.round(cx * 10) / 10, Math.round(cz * 10) / 10]);
+      if (Math.abs(cx) > 27 || Math.abs(cz) > 27) break;
+    }
+    for (var p = 0; p < pts.length; p++){
+      var nearHouse = houses.some(function(h){ return Math.hypot(pts[p][0] - h.x, pts[p][1] - h.z) < 4.6; });
+      var nearStart = Math.hypot(pts[p][0] - start.x, pts[p][1] - start.z) < 4.6;
+      var nearPeak = Math.hypot(pts[p][0] - mountain.x, pts[p][1] - mountain.z) < 4.2;
+      if (nearHouse || nearStart || nearPeak){ ok = false; break; }
+    }
+    if (ok && pts.length >= 3) riverPts = pts;
+  }
+  if (!riverPts) return null;
+  // roads: L-paths from start to each house
+  var roadSet = {}, roadCells = [];
+  houses.forEach(function(h){
+    lPath(startCell, h.cell, rnd() < 0.5).forEach(function(c){
+      var k = c[0] + "," + c[1];
+      if (!roadSet[k]){ roadSet[k] = true; roadCells.push(c); }
+    });
+  });
+  var cand = { mountain: mountain, lake: lake, riverPts: riverPts, roadCells: roadCells,
+    houses: houses.map(function(h){ return { color: h.color, name: h.name, x: h.x, z: h.z, r: h.r }; }),
+    start: start, cargo: [], generated: true, seed: 0, _houseCells: houses.map(function(h){ return h.cell; }), _startCell: startCell };
+  // cargo scatter
+  var kinds = [];
+  ["red","blue","yellow"].forEach(function(col){ for (var n = 0; n < 5; n++) kinds.push({ kind: "box", color: col }); });
+  for (var b = 0; b < 3; b++) kinds.push({ kind: "ball", color: "green" });
+  for (var k2 = 0; k2 < kinds.length; k2++){
+    var placed = null;
+    for (var tr = 0; tr < 300 && !placed; tr++){
+      var x = Math.round((rnd() * 44 - 22) * 10) / 10, z = Math.round((rnd() * 44 - 22) * 10) / 10;
+      if (candWater(cand, x, z)) continue;
+      if (Math.hypot(x - mountain.x, z - mountain.z) < mountain.peakR + 1) continue;
+      if (houses.some(function(h){ return Math.hypot(x - h.x, z - h.z) < h.r + 1; })) continue;
+      if (Math.hypot(x - start.x, z - start.z) < 3.5) continue;
+      if (cand.cargo.some(function(c2){ return Math.hypot(x - c2.x, z - c2.z) < 3.2; })) continue;
+      placed = { kind: kinds[k2].kind, color: kinds[k2].color, x: x, z: z };
+    }
+    if (!placed) return null;
+    cand.cargo.push(placed);
+  }
+  return cand;
+}
+function validateMap(m){
+  var reasons = [];
+  if (!m.houses || m.houses.length !== 3) reasons.push("houses!=3");
+  if (!m.cargo || m.cargo.length !== 18) reasons.push("cargo!=18");
+  // road connectivity: BFS over road cells from start cell reaches every house cell
+  var set = {}, startKey = null;
+  m.roadCells.forEach(function(c){ set[c[0] + "," + c[1]] = c; });
+  var sc = m._startCell || cellAt(m.start.x, m.start.z);
+  startKey = sc[0] + "," + sc[1];
+  if (!set[startKey]) reasons.push("start not on road");
+  var seen = {}, q = [sc];
+  seen[startKey] = true;
+  while (q.length){
+    var cur = q.pop();
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(function(d){
+      var n = [cur[0] + d[0], cur[1] + d[1]], k = n[0] + "," + n[1];
+      if (set[k] && !seen[k]){ seen[k] = true; q.push(n); }
+    });
+  }
+  if (Object.keys(seen).length !== m.roadCells.length) reasons.push("road not connected");
+  var houseCells = m._houseCells || m.houses.map(function(h){ return cellAt(h.x, h.z); });
+  houseCells.forEach(function(hc, i){ if (!seen[hc[0] + "," + hc[1]]) reasons.push("house " + i + " unreachable by road"); });
+  // bridge: at least one road cell near the river
+  var hasBridge = m.roadCells.some(function(c){
+    var ctr = cellCenter(c);
+    return distToRiverPts(m.riverPts, ctr.x, ctr.z) < RIVER_HALF + 1.2;
+  });
+  if (!hasBridge) reasons.push("no bridge");
+  // cargo placement sanity
+  (m.cargo || []).forEach(function(cg, i){
+    if (candWater(m, cg.x, cg.z)) reasons.push("cargo " + i + " in water");
+    if (Math.hypot(cg.x - m.mountain.x, cg.z - m.mountain.z) < m.mountain.peakR) reasons.push("cargo " + i + " on peak");
+    if (m.houses.some(function(h){ return Math.hypot(cg.x - h.x, cg.z - h.z) < h.r; })) reasons.push("cargo " + i + " in house zone");
+  });
+  return { ok: reasons.length === 0, reasons: reasons };
+}
+function generateMap(seed){
+  for (var attempt = 0; attempt < 60; attempt++){
+    var rnd = mulberry32((seed + attempt * 7919) | 0);
+    var cand = null;
+    try { cand = buildCandidate(rnd); } catch(e){ cand = null; }
+    if (cand && validateMap(cand).ok){
+      cand.seed = seed; cand.generated = true;
+      delete cand._houseCells; delete cand._startCell;
+      return cand;
+    }
+  }
+  var f = deepCopy(FIXED_MAP);
+  f.seed = seed; f.generated = false;
+  return f;
+}
+if (typeof module !== "undefined" && module.exports){
+  module.exports = { CELL, GRID, HALF, TIME_LIMIT, CART_CAPACITY, RIVER_HALF,
+    SURFACES, FIXED_MAP, getMap, applyMap, generateMap, validateMap, mulberry32,
+    cellAt, cellCenter, isRoadCell, distToSeg, distToRiver, distToLake,
+    distToMountain, surfaceAt, isBlocked, houseAt, houseFor, canDeliver, windAt, windVector, throwDamage, scoreItem, cargoDefs, roadWaypoints,
+    get MOUNTAIN(){ return MOUNTAIN; }, get LAKE(){ return LAKE; }, get HOUSES(){ return HOUSES; },
+    get ROAD_CELLS(){ return ROAD_CELLS; }, get DEPOT(){ return DEPOT; }, get GOAL(){ return GOAL; }, get RIVER_PTS(){ return RIVER_PTS; } };
+}
+
+</script>
+
+<script>
+(function(){
+"use strict";
+var $ = function(id){ return document.getElementById(id); };
+var els = { view: $("view"), time: $("time"), delivered: $("delivered"), score: $("score"), best: $("best"),
+  cntRed: $("cntRed"), cntBlue: $("cntBlue"), cntYellow: $("cntYellow"), cntBall: $("cntBall"),
+  windArrow: $("windArrow"), windText: $("windText"), surface: $("surface"), load: $("load"), held: $("held"),
+  wobble: $("wobble"), startBtn: $("startBtn"), newBtn: $("newBtn"), camBtn: $("camBtn"), botBtn: $("botBtn"),
+  recBtn: $("recBtn"), result: $("result"), log: $("log") };
+var BOX_COLORS = { red: 0xd23b2e, blue: 0x2e5fd2, yellow: 0xe8b71c, green: 0x2fae4e };
+var S = null, scene, camera, renderer, cartGroup, wheelL, wheelR;
+var itemMeshes = {}, camMode = "back", keys = {}, bot = null, lastTs = 0;
+var events = [];
+function addLog(t){ var li = document.createElement("li"); li.textContent = t; els.log.appendChild(li); els.log.scrollTop = els.log.scrollHeight; events.push({ t: S ? Math.round(S.elapsed) : 0, text: t }); }
+var bannerTimer = null;
+function showBanner(t){
+  var b = $("banner"); if (!b) return;
+  b.textContent = t; b.className = "show";
+  if (bannerTimer) clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(function(){ b.className = ""; }, 2600);
+}
+function fmt(n){ return Math.round(n * 10) / 10; }
+
+function newGame(){
+  var gm = generateMap((Math.random() * 1000000000) | 0);
+  applyMap(gm);
+  if (scene) buildTerrain();
+  S = { x: DEPOT.x, z: DEPOT.z - 2.5, h: 0, vx: 0, vz: 0, wobble: 0, seed: gm.seed, generatedMap: gm.generated, camSnap: true,
+    load: [], held: null, delivered: 0, deliveredBy: { red: 0, blue: 0, yellow: 0, ball: 0 }, inHouse: null, score: 0, elapsed: 0, running: false, over: false,
+    windBase: { dir: Math.random() * Math.PI * 2, speed: 1.5 + Math.random() * 1.5 }, botMode: false,
+    disaster: null, teased: false, quakeNext: 0, quakeAmp: 0 };
+  S.items = cargoDefs().map(function(d){
+    return { id: d.id, kind: d.kind, color: d.color, hp: d.hp, state: "ground",
+      x: d.x, z: d.z, y: d.kind === "ball" ? 0.55 : 0.5, vx: 0, vz: 0, vy: 0 };
+  });
+  events = [];
+  buildItems(); resetCartMesh();
+  els.log.innerHTML = ""; els.result.className = "result"; els.result.innerHTML = "";
+  els.startBtn.disabled = false; els.startBtn.textContent = "スタート";
+  addLog(gm.generated ? "マップを自動生成した（シード " + gm.seed + "）。" : "マップ生成が成立しなかったので、固定マップで遊ぶ。");
+  addLog("箱18個がマップに散らばっている。色の合う家へ届けよう。ボールはどこの家でもOK。台車は6個まで。");
+  updatePanel();
+}
+function loadBest(){ try { var v = localStorage.getItem("hakobu_best"); return v ? Number(v) : null; } catch(e){ return null; } }
+function saveBest(){ try { var b = loadBest(); if (b === null || S.score > b) localStorage.setItem("hakobu_best", String(S.score)); } catch(e){} }
+
+function surfaceInfo(){ var k = surfaceAt(S.x, S.z); return { key: k, friction: SURFACES[k].friction, speedMul: SURFACES[k].speedMul, name: SURFACES[k].name }; }
+
+function step(dt){
+  if (!S) return;
+  if (!S.running || S.over) { stepItems(dt, false); syncMeshes(windVector(S.elapsed || 0, S.windBase)); return; }
+  S.elapsed += dt;
+  // final 30 seconds: a disaster strikes (typhoon or earthquake, coin flip)
+  var remain = TIME_LIMIT - S.elapsed;
+  if (!S.teased && remain <= 45 && remain > 30){ S.teased = true; addLog("……なにか近づいてくる気配がする。"); }
+  if (!S.disaster && remain <= 30 && remain > 0){
+    S.disaster = Math.random() < 0.5 ? "typhoon" : "quake";
+    if (S.disaster === "typhoon"){
+      S.windBase.speed = 4.3;
+      showBanner("🌪 台風が来た！");
+      addLog("台風接近！ 風が一気に強くなった。積み荷に注意。");
+    } else {
+      S.quakeNext = S.elapsed + 0.8;
+      showBanner("⚠️ 地震発生！");
+      addLog("地震だ！ 揺れで荷物が落ちやすくなる。");
+    }
+  }
+  if (S.disaster === "typhoon"){ S.windBase.dir += dt * 0.05; }
+  if (S.disaster === "quake"){
+    S.quakeAmp = Math.max(0, S.quakeAmp - dt * 0.9);
+    if (S.elapsed >= S.quakeNext){
+      S.quakeNext = S.elapsed + 3 + Math.random() * 3.5;
+      S.quakeAmp = 0.75 + Math.random() * 0.45;
+      S.wobble = Math.min(1.4, S.wobble + 0.38 + S.load.length * 0.045);
+      S.items.forEach(function(it){
+        if (it.state === "ground" && it.kind === "ball"){ it.vx += (Math.random() - 0.5) * 2.4; it.vz += (Math.random() - 0.5) * 2.4; }
+      });
+      addLog("大きな揺れ！");
+    }
+  }
+  if (S.elapsed >= TIME_LIMIT){ finish(); }
+  var sf = surfaceInfo();
+  var wv = windVector(S.elapsed, S.windBase);
+  // input: human keys or bot
+  var inp = bot ? botInput(dt, wv) : { fwd: (keys.up ? 1 : 0) + (keys.down ? -0.6 : 0), turn: (keys.left ? -1 : 0) + (keys.right ? 1 : 0) };
+  var fx = Math.cos(S.h), fz = Math.sin(S.h);
+  var speedAlong = S.vx * fx + S.vz * fz;
+  var accel = inp.fwd * 7 * sf.speedMul;
+  S.vx += fx * accel * dt; S.vz += fz * accel * dt;
+  // wind pushes cart; more load stacked = more push and wobble
+  var stackH = 1 + S.load.length * 0.18;
+  S.vx += wv.x * 0.10 * stackH * dt * 3; S.vz += wv.z * 0.10 * stackH * dt * 3;
+  // steering: heading turns; reversing flips the turn direction
+  if (Math.abs(speedAlong) > 0.2 && inp.turn !== 0){
+    S.h += inp.turn * dt * 1.9 * (0.45 + sf.friction * 0.8) * (speedAlong < -0.3 ? -1 : 1);
+  }
+  // grip: rolling wheels pull the velocity direction toward the heading
+  // (low friction on roads = the slide lingers longer)
+  {
+    var spNow = Math.hypot(S.vx, S.vz);
+    if (spNow > 0.5){
+      var va = Math.atan2(S.vz, S.vx);
+      var targetA = speedAlong >= 0 ? S.h : S.h + Math.PI;
+      var dA = targetA - va;
+      while (dA > Math.PI) dA -= Math.PI * 2;
+      while (dA < -Math.PI) dA += Math.PI * 2;
+      var align = Math.min(1, (0.5 + sf.friction * 2.2) * dt * 3);
+      var na = va + dA * align;
+      S.vx = Math.cos(na) * spNow; S.vz = Math.sin(na) * spNow;
+    }
+  }
+  var sp = Math.sqrt(S.vx * S.vx + S.vz * S.vz);
+  var maxSp = 6.2 * sf.speedMul + 1.2;
+  var dragK = sf.key === "water" ? 3.2 : (1.4 - sf.friction);
+  S.vx -= S.vx * dragK * dt; S.vz -= S.vz * dragK * dt;
+  if (sp > maxSp){ S.vx *= maxSp / sp; S.vz *= maxSp / sp; sp = maxSp; }
+  var nx = S.x + S.vx * dt, nz = S.z + S.vz * dt;
+  nx = Math.max(-HALF + 1, Math.min(HALF - 1, nx)); nz = Math.max(-HALF + 1, Math.min(HALF - 1, nz));
+  if (!isBlocked(nx, nz)){ S.x = nx; S.z = nz; } else { S.vx *= -0.2; S.vz *= -0.2; }
+  // wobble: lateral slip + sharp turn + wind gust + slope; cart itself never tips (stable)
+  var lat = Math.abs(-S.vx * fz + S.vz * fx);
+  S.wobble += (lat * 0.10 + Math.abs(inp.turn) * sp * 0.022 + wv.gust * 0.03 * (S.load.length / 6 + 0.2)) * dt * 3;
+  S.wobble = Math.max(0, Math.min(1.4, S.wobble - dt * 0.55));
+  if (S.wobble >= 1 && S.load.length){
+    S.wobble = 0.55;
+    var droppedItem = S.load.pop();
+    dropFromCart(droppedItem);
+  }
+  // water soaks boxes on cart slowly
+  if (sf.key === "water") S.load.forEach(function(it){ if (it.kind === "box") it.hp = Math.max(0, it.hp - dt * 4); });
+  stepItems(dt, true);
+  checkGoal();
+  syncMeshes(wv); updatePanel(wv, sf);
+}
+function dropFromCart(it){
+  if (bot) bot.carefulT = 8; // after a drop, the demo AI drives gently for a while
+  it.state = "ground"; it.x = S.x - Math.cos(S.h) * 2.2; it.z = S.z - Math.sin(S.h) * 2.2;
+  it.y = it.kind === "ball" ? 0.55 : 0.5;
+  if (it.kind === "ball"){ it.vx = -S.vx * 0.5 + (Math.random() - 0.5) * 2; it.vz = -S.vz * 0.5 + (Math.random() - 0.5) * 2; }
+  addLog("揺れて一番上の荷物が落ちた（" + label(it) + "）。");
+}
+function label(it){ return (it.kind === "ball" ? "緑ボール" : { red: "赤箱", blue: "青箱", yellow: "黄箱" }[it.color]) + (it.kind === "box" && it.hp < 100 ? " HP" + Math.round(it.hp) : ""); }
+function stepItems(dt, live){
+  if (!S) return;
+  var wv = windVector(S.elapsed || 0, S.windBase);
+  S.items.forEach(function(it){
+    if (it.state === "flying"){
+      it.vy -= 9.8 * dt;
+      it.x += it.vx * dt; it.z += it.vz * dt; it.y += it.vy * dt;
+      var groundY = it.kind === "ball" ? 0.55 : 0.5;
+      if (it.y <= groundY){
+        it.y = groundY;
+        var impact = Math.sqrt(it.vy * it.vy + (it.vx * it.vx + it.vz * it.vz) * 0.25);
+        if (it.kind === "box"){
+          var dmg = throwDamage(impact);
+          if (surfaceAt(it.x, it.z) === "water") dmg += 20;
+          if (dmg > 0){ it.hp = Math.max(0, it.hp - dmg); addLog("投げた" + label(it) + "にダメージ" + dmg + (it.hp <= 0 ? "。壊れた！" : "")); }
+          else addLog("投げた" + label(it) + "は無傷で着地。");
+          it.vx = 0; it.vz = 0;
+        } else {
+          it.vx *= 0.55; it.vz *= 0.55; // ball bounces and rolls on
+          addLog("ボールが跳ねて転がった。");
+        }
+        it.vy = 0; it.state = "ground";
+        checkItemGoal(it);
+      }
+    } else if (it.state === "ground" && it.kind === "ball" && live){
+      // loose balls roll with wind and leftover velocity
+      it.vx += wv.x * 0.12 * dt; it.vz += wv.z * 0.12 * dt;
+      it.vx -= it.vx * 1.1 * dt; it.vz -= it.vz * 1.1 * dt;
+      it.x = Math.max(-HALF + 0.6, Math.min(HALF - 0.6, it.x + it.vx * dt));
+      it.z = Math.max(-HALF + 0.6, Math.min(HALF - 0.6, it.z + it.vz * dt));
+      if (Math.abs(it.vx) + Math.abs(it.vz) > 0.4) checkItemGoal(it);
+    }
+  });
+}
+function distToCart(it){ var dx = it.x - S.x, dz = it.z - S.z; return Math.sqrt(dx * dx + dz * dz); }
+function nearestGround(maxD){
+  var bestIt = null, bd = maxD;
+  S.items.forEach(function(it){ if (it.state === "ground"){ var d = distToCart(it); if (d < bd){ bd = d; bestIt = it; } } });
+  return bestIt;
+}
+function doLoad(){
+  if (!S || !S.running || S.over) return;
+  if (S.load.length >= CART_CAPACITY){ addLog("台車はいっぱい（6個まで）。"); return; }
+  var it = nearestGround(2.6);
+  if (!it){ addLog("近くに荷物がない。"); return; }
+  it.state = "cart"; S.load.push(it);
+  addLog(label(it) + "を積んだ（" + S.load.length + "/6）。");
+}
+function doHoldThrow(){
+  if (!S || !S.running || S.over) return;
+  if (S.held){
+    var it = S.held; S.held = null; it.state = "flying";
+    it.x = S.x + Math.cos(S.h) * 1.6; it.z = S.z + Math.sin(S.h) * 1.6; it.y = 1.4;
+    it.vx = Math.cos(S.h) * 9 + S.vx * 0.5; it.vz = Math.sin(S.h) * 9 + S.vz * 0.5; it.vy = 5;
+    addLog(label(it) + "を投げた！");
+  } else {
+    var it2 = nearestGround(2.4);
+    if (!it2){ addLog("手に取れる荷物が近くにない。"); return; }
+    it2.state = "held"; S.held = it2;
+    addLog(label(it2) + "を持った。もう一度押すと向いてる方向へ投げる。");
+  }
+}
+function deliverItem(it, how){
+  it.state = "done"; var pts = scoreItem(it); S.score += pts; S.delivered++;
+  S.deliveredBy[it.kind === "ball" ? "ball" : it.color]++;
+  addLog(label(it) + "を納品（" + how + "、" + pts + "点）。");
+}
+function checkGoal(){
+  var house = houseAt(S.x, S.z);
+  if (!house){ S.inHouse = null; return; }
+  if (S.load.length){
+    var matched = S.load.filter(function(it){ return canDeliver(it, house); });
+    if (matched.length){
+      matched.forEach(function(it){ deliverItem(it, house.name); });
+      S.load = S.load.filter(function(it){ return !canDeliver(it, house); });
+      addLog(house.name + "に着いた。" + matched.length + "個を納品" + (S.load.length ? "（合わない箱" + S.load.length + "個は積んだまま）" : "") + "。");
+    } else if (S.inHouse !== house.color){
+      var need = houseFor(S.load[0]);
+      addLog("ここは" + house.name + "。積み荷は" + (need ? need.name : "別の家") + "行きだよ。");
+    }
+  }
+  S.inHouse = house.color;
+}
+function checkItemGoal(it){
+  if (it.state !== "ground") return;
+  var house = houseAt(it.x, it.z);
+  if (house && canDeliver(it, house)) deliverItem(it, it.kind === "ball" ? "転がり込み" : "投げ込み");
+}
+function finish(){
+  if (S.over) return; S.over = true; S.running = false; bot = null; els.botBtn.textContent = "AIが運ぶのを見る（デモ）";
+  saveBest();
+  els.result.className = "result show";
+  els.result.innerHTML = "<strong>時間切れ。届けた " + S.delivered + " / 18 個・スコア " + S.score + " 点。</strong>" +
+    (S.disaster ? "<br>終盤は" + (S.disaster === "typhoon" ? "台風" : "地震") + "が来た。それでも " + S.delivered + " 個届けた。" : "") +
+    (S.delivered >= 18 ? "<br>全部運べた！すごい。" : "<br>残りの箱はマップに散らばったまま。同じ色をまとめて積んで、その色の家へ直行するのが近道。");
+  addLog("終了。スコア " + S.score + "点。");
+  els.startBtn.disabled = false; els.startBtn.textContent = "もう一度";
+}
+function updatePanel(wv, sf){
+  if (!S) return;
+  wv = wv || windVector(S.elapsed, S.windBase); sf = sf || surfaceInfo();
+  els.time.textContent = String(Math.max(0, Math.ceil(TIME_LIMIT - S.elapsed))) + (S.disaster === "typhoon" ? " 🌪" : S.disaster === "quake" ? " ⚠️" : "");
+  els.delivered.textContent = String(S.delivered);
+  els.cntRed.textContent = String(S.deliveredBy.red); els.cntBlue.textContent = String(S.deliveredBy.blue);
+  els.cntYellow.textContent = String(S.deliveredBy.yellow); els.cntBall.textContent = String(S.deliveredBy.ball);
+  els.score.textContent = String(S.score);
+  els.surface.textContent = sf.name;
+  els.load.textContent = String(S.load.length);
+  els.held.textContent = S.held ? label(S.held) : "なし";
+  els.windText.textContent = fmt(wv.speed) + " m/秒" + (wv.gust > 0.6 ? "（突風）" : "");
+  els.windArrow.style.transform = "rotate(" + Math.round(wv.dir * 180 / Math.PI + 90) + "deg)";
+  els.wobble.style.width = Math.round(Math.min(1, S.wobble) * 100) + "%";
+  els.wobble.className = S.wobble > 0.7 ? "hot" : "";
+  var b = loadBest(); els.best.textContent = b !== null ? "（自己ベスト " + b + "点）" : "";
+}
+
+// ---- AI demo: same map, same physics; navigates via the road network (BFS),
+// drives off-road only for the last hop, recovers when stuck ----
+function makeBot(){
+  return { phase: "seek", wait: 0, targetItem: null, plan: [], planIdx: 0, planFor: null,
+    stuckT: 0, recoverT: 0, skipUntil: {}, recCount: {}, arriveR: 2.4, seekLoadedT: 0 };
+}
+function nearestRoadCell(x, z){
+  var bc = null, bd = 1e9;
+  ROAD_CELLS.forEach(function(c){
+    var ctr = cellCenter(c), d = (ctr.x - x) * (ctr.x - x) + (ctr.z - z) * (ctr.z - z);
+    if (d < bd){ bd = d; bc = c; }
+  });
+  return bc;
+}
+function roadPathCenters(fx, fz, tx, tz){
+  var a = nearestRoadCell(fx, fz), b = nearestRoadCell(tx, tz);
+  var key = function(c){ return c[0] + "," + c[1]; };
+  var set = {};
+  ROAD_CELLS.forEach(function(c){ set[key(c)] = c; });
+  var prev = {}, seen = {}, q = [a];
+  seen[key(a)] = true; prev[key(a)] = null;
+  while (q.length){
+    var cur = q.shift();
+    if (cur === b) break;
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(function(d){
+      var n = [cur[0] + d[0], cur[1] + d[1]], k = key(n);
+      if (set[k] && !seen[k]){ seen[k] = true; prev[k] = cur; q.push(n); }
+    });
+  }
+  if (!seen[key(b)]) return [{ x: tx, z: tz }];
+  var cells = [], c2 = b;
+  while (c2){ cells.push(c2); c2 = prev[key(c2)]; }
+  cells.reverse();
+  var pts = cells.map(function(c){ return cellCenter(c); });
+  pts.push({ x: tx, z: tz });
+  return pts;
+}
+function botPlanTo(tx, tz, tag){
+  bot.plan = roadPathCenters(S.x, S.z, tx, tz);
+  bot.planIdx = 0; bot.planFor = tag;
+  bot.arriveR = tag.indexOf("house:") === 0 ? 3.6 : 2.4;
+}
+function followPlan(vmax){
+  if (!bot.plan.length || bot.planIdx >= bot.plan.length) return { fwd: 0, turn: 0, arrived: true };
+  if (S.wobble > 0.35) vmax = Math.min(vmax, 1.7);
+  if (bot && bot.carefulT > 0) vmax = Math.min(vmax, 2.2);
+  var p = bot.plan[bot.planIdx];
+  var dist = Math.hypot(p.x - S.x, p.z - S.z);
+  var last = bot.planIdx === bot.plan.length - 1;
+  if (last && dist < 6) vmax = Math.min(vmax, 1.5); // slow down near the goal so the turn radius fits
+  if (last && dist < 4) vmax = Math.min(vmax, 1.0);
+  // waypoint capture: also advance when we have passed the closest approach
+  var wpKey2 = bot.planFor + ":" + bot.planIdx;
+  if (bot.wpKey !== wpKey2){ bot.wpKey = wpKey2; bot.wpMin = dist; }
+  else bot.wpMin = Math.min(bot.wpMin, dist);
+  var passed = !last && bot.wpMin < 5 && dist > bot.wpMin + 1.3;
+  if (dist < (last ? bot.arriveR : 3.2) || passed){
+    bot.planIdx++;
+    if (bot.planIdx >= bot.plan.length) return { fwd: 0, turn: 0, arrived: true };
+    p = bot.plan[bot.planIdx];
+  }
+  var inp = steerTo(p, vmax);
+  // obstacle probe: mountain peak ahead -> swerve
+  var probeX = S.x + Math.cos(S.h) * 3.2, probeZ = S.z + Math.sin(S.h) * 3.2;
+  if (isBlocked(probeX, probeZ)){ inp.turn = inp.turn >= 0 ? -1 : 1; inp.fwd = Math.min(Math.max(inp.fwd, 0.2), 0.35); }
+  return inp;
+}
+function botInput(dt){
+  if (!bot) return { fwd: 0, turn: 0 };
+  if (bot.carefulT > 0) bot.carefulT -= dt;
+  var sp = Math.hypot(S.vx, S.vz);
+  // recovery: if we have been trying to move but barely moving, back out and replan
+  if (bot.recoverT > 0){
+    bot.recoverT -= dt;
+    return { fwd: -0.75, turn: 0.9 };
+  }
+  var busy = bot.phase === "seek" || bot.phase === "deliver";
+  if (busy && sp < 0.35 && bot.wait <= 0) bot.stuckT += dt; else bot.stuckT = Math.max(0, bot.stuckT - dt * 2);
+  // progress check: distance to the CURRENT waypoint must shrink
+  // (distance to the final goal can grow while following a road detour)
+  if (busy && bot.plan.length && bot.planIdx < bot.plan.length && bot.wait <= 0){
+    var wp = bot.plan[bot.planIdx], wpKey = bot.planFor + ":" + bot.planIdx;
+    var wpD = Math.hypot(wp.x - S.x, wp.z - S.z);
+    if (bot.progKey !== wpKey || wpD < bot.progDist - 1){ bot.progKey = wpKey; bot.progDist = wpD; bot.progT = 0; }
+    else {
+      bot.progT = (bot.progT || 0) + dt;
+      if (bot.progT > 4) bot.stuckT = 99;
+    }
+  }
+  if (bot.stuckT > 2.5){
+    bot.stuckT = 0; bot.recoverT = 0.9; bot.progDist = undefined; bot.progT = 0; bot.progKey = null;
+    // same target twice in a row: give up on it for a while so we cannot loop forever
+    if (bot.planFor){
+      var rk = bot.planFor;
+      bot.recCount[rk] = (bot.recCount[rk] || 0) + 1;
+      if (bot.recCount[rk] >= 2 && rk.indexOf("item:") === 0){
+        bot.skipUntil[rk.slice(5)] = S.elapsed + 15;
+        bot.targetItem = null; bot.recCount[rk] = 0;
+        addLog("AI：あの荷物は後回しにする。");
+      }
+      bot.planFor = null;
+    }
+    addLog("AI：詰まったので切り返し中…");
+    return { fwd: -0.75, turn: 0.9 };
+  }
+  var vmax = S.load.length >= 2 ? 3.4 : 4.2;
+  if (bot.phase === "seek"){
+    var anyGround = S.items.some(function(it){ return it.state === "ground"; });
+    if (S.load.length) bot.seekLoadedT = (bot.seekLoadedT || 0) + dt; else bot.seekLoadedT = 0;
+    var nearestPen = 1e9;
+    S.items.forEach(function(it){
+      if (it.state !== "ground") return;
+      var d = Math.hypot(it.x - S.x, it.z - S.z);
+      if (it.kind === "box" && S.load.some(function(l){ return l.kind === "box" && l.color !== it.color; })) d += 15;
+      if (d < nearestPen) nearestPen = d;
+    });
+    if (S.load.length >= 3 || (S.load.length >= 2 && (bot.seekLoadedT > 18 || nearestPen > 20)) || (!anyGround && S.load.length)){
+      bot.phase = "deliver"; bot.planFor = null; bot.seekLoadedT = 0; return { fwd: 0, turn: 0 };
+    }
+    if (!anyGround) return { fwd: 0, turn: 0 };
+    var boxesLeft = S.items.some(function(it){ return it.state === "ground" && it.kind === "box"; });
+    if (!bot.targetItem || bot.targetItem.state !== "ground"){
+      var bd = 1e9; bot.targetItem = null;
+      S.items.forEach(function(it){
+        if (it.state !== "ground") return;
+        if (bot.skipUntil[it.id] && bot.skipUntil[it.id] > S.elapsed) return;
+        var d = Math.hypot(it.x - S.x, it.z - S.z);
+        // prefer same color as boxes already on board
+        if (it.kind === "box" && S.load.some(function(l){ return l.kind === "box" && l.color !== it.color; })) d += 15;
+        // balls roll away in the wind: only take them when boxes are done or very close
+        if (it.kind === "ball" && boxesLeft) d += 30;
+        // items sitting in water are a last resort
+        if (surfaceAt(it.x, it.z) === "water") d += 40;
+        if (d < bd){ bd = d; bot.targetItem = it; }
+      });
+      bot.planFor = null;
+      if (!bot.targetItem) return { fwd: 0, turn: 0 };
+    }
+    var it = bot.targetItem, tag = "item:" + it.id;
+    // a rolling ball invalidates its plan quickly: replan when it moved away
+    if (it.kind === "ball" && bot.plan.length){
+      var endP2 = bot.plan[bot.plan.length - 1];
+      if (Math.hypot(endP2.x - it.x, endP2.z - it.z) > 3) bot.planFor = null;
+    }
+    if (bot.planFor !== tag) botPlanTo(it.x, it.z, tag);
+    var r = followPlan(vmax);
+    if (r.arrived){
+      bot.wait += dt;
+      if (bot.wait > 0.4){ bot.wait = 0; if (bot.targetItem) bot.recCount["item:" + bot.targetItem.id] = 0; doLoad(); bot.targetItem = null; bot.planFor = null; }
+      return { fwd: 0, turn: 0 };
+    }
+    bot.wait = 0;
+    return r;
+  }
+  // deliver: house of the first box on board; balls-only -> nearest house
+  var firstBox = null;
+  S.load.forEach(function(l){ if (!firstBox && l.kind === "box") firstBox = l; });
+  var house = firstBox ? houseFor(firstBox) : null;
+  if (!house){
+    var bd2 = 1e9;
+    HOUSES.forEach(function(hs){ var d = (hs.x - S.x) * (hs.x - S.x) + (hs.z - S.z) * (hs.z - S.z); if (d < bd2){ bd2 = d; house = hs; } });
+  }
+  if (!house || !S.load.length){ bot.phase = "seek"; bot.planFor = null; return { fwd: 0, turn: 0 }; }
+  var htag = "house:" + house.color;
+  if (bot.planFor !== htag) botPlanTo(house.x, house.z, htag);
+  var r2 = followPlan(vmax);
+  if (r2.arrived){ bot.phase = "seek"; bot.planFor = null; }
+  return r2;
+}
+function steerTo(target, vmax){
+  var want = Math.atan2(target.z - S.z, target.x - S.x);
+  var diff = want - S.h;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  var turn = Math.max(-1, Math.min(1, diff * 1.35));
+  var sp = Math.sqrt(S.vx * S.vx + S.vz * S.vz);
+  var effMax = Math.abs(diff) > 0.5 ? vmax * 0.55 : vmax;
+  var fwd = Math.abs(diff) > 1.2 ? 0.15 : (sp < effMax ? 0.85 : 0);
+  return { fwd: fwd, turn: turn };
+}
+
+// ---- 3D ----
+function box(w, h, d, color, x, y, z){
+  var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ color: color }));
+  m.position.set(x, y, z); return m;
+}
+function buildWorld(){
+  scene = new THREE.Scene(); scene.background = new THREE.Color(0xcfe4ef);
+  camera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  els.view.appendChild(renderer.domElement);
+  var ground = new THREE.Mesh(new THREE.PlaneGeometry(50, 50), new THREE.MeshBasicMaterial({ color: 0x9db877 }));
+  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  buildTerrain();
+  buildCart();
+  resize(); window.addEventListener("resize", resize);
+  renderer.setAnimationLoop(tick);
+}
+var terrainGroup = null;
+function buildTerrain(){
+  if (!scene) return;
+  if (terrainGroup) scene.remove(terrainGroup);
+  terrainGroup = new THREE.Group();
+  scene.add(terrainGroup);
+  var T = terrainGroup;
+  // road cells (1 cell = 5x5 boxes)
+  ROAD_CELLS.forEach(function(c){
+    var cx = c[0] * CELL - HALF + CELL / 2, cz = c[1] * CELL - HALF + CELL / 2;
+    var isBridge = distToRiver(cx, cz) < RIVER_HALF + 1.2;
+    var p = new THREE.Mesh(new THREE.PlaneGeometry(CELL, CELL),
+      new THREE.MeshBasicMaterial({ color: isBridge ? 0xa9803e : 0x8a8f98 }));
+    p.rotation.x = -Math.PI / 2; p.position.set(cx, isBridge ? 0.09 : 0.03, cz); T.add(p);
+  });
+  // lake
+  var lake = new THREE.Mesh(new THREE.CircleGeometry(LAKE.r, 28), new THREE.MeshBasicMaterial({ color: 0x3f7fc4 }));
+  lake.rotation.x = -Math.PI / 2; lake.position.set(LAKE.x, 0.05, LAKE.z); T.add(lake);
+  // river: strips between points
+  for (var i = 0; i < RIVER_PTS.length - 1; i++){
+    var a = RIVER_PTS[i], b = RIVER_PTS[i + 1];
+    var mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+    var len = Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+    var seg = new THREE.Mesh(new THREE.PlaneGeometry(len + 1, RIVER_HALF * 2), new THREE.MeshBasicMaterial({ color: 0x3f7fc4 }));
+    seg.rotation.x = -Math.PI / 2; seg.rotation.z = -Math.atan2(b[1] - a[1], b[0] - a[0]);
+    seg.position.set(mx, 0.04, mz); T.add(seg);
+  }
+  // mountain: small cone + snow cap
+  var mt = new THREE.Mesh(new THREE.ConeGeometry(MOUNTAIN.r, MOUNTAIN.h, 24), new THREE.MeshBasicMaterial({ color: 0x8d8378 }));
+  mt.position.set(MOUNTAIN.x, MOUNTAIN.h / 2, MOUNTAIN.z); T.add(mt);
+  var snow = new THREE.Mesh(new THREE.ConeGeometry(2.2, 1.1, 24), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  snow.position.set(MOUNTAIN.x, MOUNTAIN.h - 0.4, MOUNTAIN.z); T.add(snow);
+  // start plaza
+  var dep = new THREE.Mesh(new THREE.PlaneGeometry(7, 7), new THREE.MeshBasicMaterial({ color: 0xe8d98a, transparent: true, opacity: 0.4 }));
+  dep.rotation.x = -Math.PI / 2; dep.position.set(DEPOT.x, 0.02, DEPOT.z); T.add(dep);
+  // 3 houses: red / blue / yellow, each with matching zone and roof
+  HOUSES.forEach(function(hs){
+    var colHex = BOX_COLORS[hs.color];
+    var gz = new THREE.Mesh(new THREE.CircleGeometry(hs.r, 28), new THREE.MeshBasicMaterial({ color: colHex, transparent: true, opacity: 0.35 }));
+    gz.rotation.x = -Math.PI / 2; gz.position.set(hs.x, 0.06, hs.z); T.add(gz);
+    // house body sits just outside the zone, pushed toward the nearest edge
+    var ex = 0, ez = 0;
+    if (Math.abs(hs.x) >= Math.abs(hs.z)) ex = hs.x >= 0 ? 5.8 : -5.8; else ez = hs.z >= 0 ? 5.8 : -5.8;
+    var hx = Math.max(-23, Math.min(23, hs.x + ex)), hz = Math.max(-23, Math.min(23, hs.z + ez));
+    var body = box(4, 2.6, 3.6, 0xf3ead8, hx, 1.3, hz); T.add(body);
+    var roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.7, 4), new THREE.MeshBasicMaterial({ color: colHex }));
+    roof.position.set(hx, 3.45, hz); roof.rotation.y = Math.PI / 4; T.add(roof);
+    var pole = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 10), new THREE.MeshBasicMaterial({ color: colHex }));
+    pole.position.set(hs.x, 2.6, hs.z); T.add(pole);
+  });
+  // trees only where they fit the current map (grass, no house, no road)
+  [[-20,-18],[-8,-20],[20,18],[-22,2],[14,20],[-20,10],[10,-20]].forEach(function(p){
+    if (surfaceAt(p[0], p[1]) !== "grass" || houseAt(p[0], p[1])) return;
+    var tr = new THREE.Mesh(new THREE.ConeGeometry(1.4, 3.2, 8), new THREE.MeshBasicMaterial({ color: 0x4a7a3a }));
+    tr.position.set(p[0], 1.8, p[1]); T.add(tr);
+  });
+}
+function buildCart(){
+  cartGroup = new THREE.Group();
+  // platform: 3 wide x 4 long (in boxes)
+  var plat = box(4, 0.22, 3, 0x5a6b8a, 0, 0.72, 0); cartGroup.add(plat);
+  var frame = box(4.3, 0.12, 0.18, 0x8a7a5a, -2.3, 0.85, 0); cartGroup.add(frame); // handle bar base
+  [-1.1, 1.1].forEach(function(z){
+    var hbar = box(1.2, 0.09, 0.09, 0x8a7a5a, -2.15, 1.15, z); cartGroup.add(hbar);
+  });
+  var wg = new THREE.CylinderGeometry(0.62, 0.62, 0.24, 16);
+  var wm = new THREE.MeshBasicMaterial({ color: 0x2f2a22 });
+  wheelL = new THREE.Mesh(wg, wm); wheelL.rotation.x = Math.PI / 2; wheelL.position.set(0.4, 0.62, 1.62); cartGroup.add(wheelL);
+  wheelR = new THREE.Mesh(wg, wm); wheelR.rotation.x = Math.PI / 2; wheelR.position.set(0.4, 0.62, -1.62); cartGroup.add(wheelR);
+  var leg = box(0.12, 0.72, 0.12, 0x555555, 1.8, 0.36, 1.1); cartGroup.add(leg);
+  var leg2 = box(0.12, 0.72, 0.12, 0x555555, 1.8, 0.36, -1.1); cartGroup.add(leg2);
+  scene.add(cartGroup);
+}
+function resetCartMesh(){ if (cartGroup) syncMeshes(windVector(0, S.windBase)); }
+function buildItems(){
+  Object.keys(itemMeshes).forEach(function(k){ scene.remove(itemMeshes[k]); });
+  itemMeshes = {};
+  S.items.forEach(function(it){
+    var m;
+    if (it.kind === "ball"){
+      m = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), new THREE.MeshBasicMaterial({ color: BOX_COLORS.green }));
+    } else {
+      m = box(1, 1, 1, BOX_COLORS[it.color], 0, 0, 0);
+    }
+    m.userData.itemId = it.id; scene.add(m); itemMeshes[it.id] = m;
+  });
+}
+function slotPos(i){
+  return { x: (i % 3 - 1) * 1.3, y: 1.35 + Math.floor(i / 3) * 1.05, z: 0 };
+}
+function syncMeshes(wv){
+  if (!cartGroup || !S) return;
+  cartGroup.position.set(S.x, 0, S.z);
+  cartGroup.rotation.y = -S.h;
+  cartGroup.rotation.z = Math.sin((S.elapsed || 0) * 9) * S.wobble * 0.06 + S.wobble * 0.05;
+  var sp = Math.sqrt(S.vx * S.vx + S.vz * S.vz);
+  if (wheelL){ wheelL.rotation.y += sp * 0.03; wheelR.rotation.y += sp * 0.03; }
+  S.items.forEach(function(it){
+    var m = itemMeshes[it.id]; if (!m) return;
+    if (it.state === "done"){ m.visible = false; return; }
+    m.visible = true;
+    if (it.kind === "box") m.material.color.setHex(BOX_COLORS[it.color]).multiplyScalar(0.45 + 0.55 * Math.max(0, it.hp) / 100);
+    if (it.state === "cart"){
+      var idx = S.load.indexOf(it), p = slotPos(idx);
+      m.position.set(p.x, p.y, p.z); cartGroup.add(m);
+    } else if (it.state === "held"){
+      m.position.set(-2.4, 1.7, 0); cartGroup.add(m);
+    } else {
+      scene.add(m);
+      m.position.set(it.x, it.y, it.z);
+      if (it.kind === "ball"){ m.rotation.x += it.vz * 0.02; m.rotation.z -= it.vx * 0.02; }
+      else m.rotation.y = it.id * 0.7;
+    }
+  });
+  // camera
+  var fx = Math.cos(S.h), fz = Math.sin(S.h);
+  if (camMode === "back"){
+    var targetPos = new THREE.Vector3(S.x - fx * 11, 7.5, S.z - fz * 11);
+    if (S.camSnap){ camera.position.set(targetPos.x, targetPos.y, targetPos.z); S.camSnap = false; }
+    else camera.position.lerp(targetPos, 0.08);
+    camera.lookAt(S.x + fx * 8, 0.8, S.z + fz * 8);
+  } else {
+    camera.position.set(S.x, 42, S.z + 0.01); camera.lookAt(S.x, 0, S.z);
+  }
+  if (S.quakeAmp > 0){
+    camera.position.x += (Math.random() - 0.5) * S.quakeAmp * 0.8;
+    camera.position.y += (Math.random() - 0.5) * S.quakeAmp * 0.55;
+  }
+}
+function resize(){
+  if (!renderer) return;
+  var w = els.view.clientWidth || 600, h = Math.max(320, Math.floor(w * 0.56));
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+function tick(ts){
+  var dt = Math.min(0.05, (ts - lastTs) / 1000 || 0.016); lastTs = ts;
+  step(dt);
+  if (renderer && S) renderer.render(scene, camera);
+}
+// input
+document.addEventListener("keydown", function(e){
+  var k = e.key.toLowerCase();
+  if (k === "w" || e.key === "ArrowUp") keys.up = true;
+  if (k === "s" || e.key === "ArrowDown") keys.down = true;
+  if (k === "a" || e.key === "ArrowLeft") keys.left = true;
+  if (k === "d" || e.key === "ArrowRight") keys.right = true;
+  if (k === "e") doLoad();
+  if (k === "f") doHoldThrow();
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].indexOf(e.key) >= 0) e.preventDefault();
+});
+document.addEventListener("keyup", function(e){
+  var k = e.key.toLowerCase();
+  if (k === "w" || e.key === "ArrowUp") keys.up = false;
+  if (k === "s" || e.key === "ArrowDown") keys.down = false;
+  if (k === "a" || e.key === "ArrowLeft") keys.left = false;
+  if (k === "d" || e.key === "ArrowRight") keys.right = false;
+});
+document.querySelectorAll("#touch button").forEach(function(b){
+  var k = b.getAttribute("data-k");
+  function on(e){ e.preventDefault();
+    if (k === "load") doLoad(); else if (k === "throw") doHoldThrow(); else keys[k] = true; }
+  function off(e){ e.preventDefault(); if (keys[k] !== undefined) keys[k] = false; }
+  b.addEventListener("touchstart", on, { passive: false }); b.addEventListener("touchend", off, { passive: false });
+  b.addEventListener("mousedown", on); b.addEventListener("mouseup", off);
+});
+els.startBtn.addEventListener("click", function(){
+  if (!S || S.over) newGame();
+  S.running = true; els.startBtn.disabled = true;
+  addLog("スタート！風向きと道路の滑りに注意。");
+});
+els.newBtn.addEventListener("click", function(){ bot = null; els.botBtn.textContent = "AIが運ぶのを見る（デモ）"; newGame(); });
+els.camBtn.addEventListener("click", function(){
+  camMode = camMode === "back" ? "top" : "back";
+  els.camBtn.textContent = camMode === "back" ? "カメラ：後ろから" : "カメラ：真上から";
+});
+els.botBtn.addEventListener("click", function(){
+  if (bot){ bot = null; S.botMode = false; els.botBtn.textContent = "AIが運ぶのを見る（デモ）"; addLog("AIデモを止めた。"); return; }
+  if (!S || S.over) newGame();
+  bot = makeBot(); S.running = true; S.botMode = true; els.startBtn.disabled = true;
+  els.botBtn.textContent = "AIを止める";
+  addLog("AIが運び始めた。散らばった箱を拾って、色の家へ届けるよ。");
+});
+els.recBtn.addEventListener("click", function(){
+  if (!S) return;
+  var rec = { game: "hakobu-v2", player: "human", date: new Date().toISOString(),
+    score: S.score, delivered: S.delivered, elapsed: Math.round(S.elapsed), events: events,
+    disaster: S.disaster, mapSeed: S.seed, mapGenerated: S.generatedMap, map: getMap() };
+  var blob = new Blob([JSON.stringify(rec, null, 2)], { type: "application/json" });
+  var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "hakobu-record.json"; a.click(); URL.revokeObjectURL(a.href);
+});
+try {
+  if (typeof THREE === "undefined") throw new Error("no three");
+  buildWorld(); newGame();
+} catch(e) {
+  els.surface.textContent = "3Dの読み込みに失敗（ネット接続を確認して開き直して）";
+}
+})();
+</script>
+</body>
+</html>
