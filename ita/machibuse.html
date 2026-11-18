@@ -121,7 +121,7 @@ function render(){
   if(!S){ scoreEl.textContent='役を選んで開始'; return; }
   const p=S.pos;
   cells[idx(p.x,p.y)].classList.add('esc');
-  if(S.lastHunt) cells[idx(S.lastHunt.x,S.lastHunt.y)].classList.add('hunt', S.lastD<=3?'hit3':(S.lastD<=6?'hit6':''));
+  if(S.lastHunt){ const hc=cells[idx(S.lastHunt.x,S.lastHunt.y)]; hc.classList.add('hunt'); if(S.lastD<=3)hc.classList.add('hit3'); else if(S.lastD<=6)hc.classList.add('hit6'); }
   const iAmEscNow = S.demo ? false : ((S.half===1)===(S.role==='esc'));
   if(S.phase==='play' && !S.demo && iAmEscNow){
     for(let y=0;y<H;y++)for(let x=0;x<W;x++) if(md(p,{x,y})<=MOVE) cells[idx(x,y)].classList.add('reach');
