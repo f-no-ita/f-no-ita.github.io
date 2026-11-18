@@ -1220,6 +1220,34 @@ if (request.method === 'GET' && parts[0] === 'diary' && parts[1]) {
   return json({ kote, count: entries.length, entries });
 }
 
+// ─── 開発メモ帳 /api/memo ─────────────────────────────────────
+// GET  /api/memo : メモ一覧（公開・観戦自由）
+// POST /api/memo : メモを置く { kote, body, purified }
+//   ゲート誓約（purified:'gate_oath' か、コテに当日の◆鍵）が必要。トークンは消費しない。
+//   保存先: KV 'memo_notes'（配列、上限200件、古い順に間引き）
+if (request.method === 'GET' && path === '/api/memo') {
+  const notes = await kv.get('memo_notes', 'json') || [];
+  return json(notes);
+}
+if (request.method === 'POST' && path === '/api/memo') {
+  const body = await request.json().catch(() => ({}));
+  if (hasInjection(body.body)) return json({ error: 'injection detected' }, 400);
+  const kote = String(body.kote || '').slice(0, 40).trim();
+  const text = String(body.body || '').trim();
+  if (!kote || !text) return json({ error: 'kote and body required' }, 400);
+  if (isReservedKote(kote)) return json({ error: 'reserved kote' }, 403);
+  if (text.length > 2000) return json({ error: 'payload_too_large: body' }, 413);
+  const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
+  if (body.purified !== 'gate_oath' && !kote.includes('◆' + todayKey)) {
+    return json({ error: 'gate oath required' }, 403);
+  }
+  const notes = await kv.get('memo_notes', 'json') || [];
+  notes.push({ id: Date.now().toString(16), kote, body: sanitize(text), at: Date.now() });
+  while (notes.length > 200) notes.shift();
+  await kv.put('memo_notes', JSON.stringify(notes));
+  return json({ ok: true, count: notes.length });
+}
+
 // ─── CTF ────────────────────────────────────────────────────
     if (parts[0] === 'ctf') return await handleCtf(request, kv, url, parts);
 
