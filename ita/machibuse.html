@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>まちぶせ v1 | 癖読みの迎撃対戦</title>
+<style>
+  body { background:#0a1410; color:#cfe8d8; font-family:sans-serif; margin:0; padding:16px; }
+  a { color:#7fd8a4; }
+  h1 { font-size:20px; margin:4px 0; }
+  .sub { color:#8fb8a0; font-size:13px; margin-bottom:12px; }
+  #wrap { display:flex; gap:16px; flex-wrap:wrap; }
+  #board { display:grid; grid-template-columns:repeat(20, 22px); gap:1px; background:#123324; padding:6px; border-radius:8px; }
+  .cell { width:22px; height:22px; background:#0e2417; border-radius:3px; cursor:pointer; position:relative; }
+  .cell.reach { background:#17452a; }
+  .cell.reach:hover { background:#1f6a3e; }
+  .cell.esc::after { content:'🎯'; position:absolute; inset:0; font-size:14px; display:flex; align-items:center; justify-content:center; }
+  .cell.hunt::after { content:'✖'; position:absolute; inset:0; font-size:13px; color:#ff9a9a; display:flex; align-items:center; justify-content:center; }
+  .cell.hit3 { outline:2px solid #ffd34d; }
+  .cell.hit6 { outline:2px solid #7fb8d8; }
+  #side { min-width:260px; max-width:340px; }
+  .panel { background:#0e2417; border:1px solid #1d4a2f; border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  button { background:#14532d; color:#eafff2; border:1px solid #2c7a47; border-radius:6px; padding:7px 12px; cursor:pointer; margin:2px; }
+  button:hover { background:#1a6b3a; }
+  #log { font-size:12px; line-height:1.7; max-height:300px; overflow-y:auto; white-space:pre-wrap; }
+  .score { font-size:16px; }
+  .turn { color:#ffd34d; }
+</style>
+</head>
+<body>
+<p><a href="game.html">← ゲーム広場に戻る</a></p>
+<h1>🎯 まちぶせ <span style="font-size:12px; color:#8fb8a0;">v1 試作</span></h1>
+<div class="sub">逃げ手は的を動かし、狩り手は次の位置を予測する。同時公開。距離3以内＝直撃5点、6以内＝かすり2点、外れ＝逃げ手1点。前半10ターン＋役割交代で後半10ターン。距離はマンハッタン、移動は最大12マス。</div>
+<div id="wrap">
+  <div id="board"></div>
+  <div id="side">
+    <div class="panel score" id="score"></div>
+    <div class="panel" id="ctrl">
+      <div id="roleSel">
+        <div>どっちで遊ぶ？</div>
+        <button onclick="start('esc')">🎯 逃げ手</button>
+        <button onclick="start('hunt')">✖ 狩り手</button>
+        <button onclick="demo()">👀 ボット同士を観戦</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+    <div class="panel"><div style="font-size:13px; color:#8fb8a0; margin-bottom:4px;">手順ログ（観戦＝この記録）</div><div id="log"></div></div>
+  </div>
+</div>
+<script>
+const W=20,H=20,MOVE=12,TURNS=10;
+const md=(a,b)=>Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let S=null;
+const board=document.getElementById('board'), logEl=document.getElementById('log'), msgEl=document.getElementById('msg'), scoreEl=document.getElementById('score');
+const cells=[];
+for(let y=0;y<H;y++)for(let x=0;x<W;x++){const d=document.createElement('div');d.className='cell';d.onclick=()=>clickCell(x,y);board.appendChild(d);cells.push(d);}
+const idx=(x,y)=>y*W+x;
+
+function botHunt(hist,pos,prev){
+  // 外挿ボット: 前回の移動量をそのまま伸ばす
+  if(!prev) return {...pos};
+  return {x:clamp(pos.x+(pos.x-prev.x),0,W-1), y:clamp(pos.y+(pos.y-prev.y),0,H-1)};
+}
+function botEsc(hist,pos,mem){
+  // 直進+たまに反転（癖のある逃げ手）
+  mem.t=(mem.t||0)+1;
+  if(!mem.dir) mem.dir={x:7,y:4};
+  if(mem.t%3===0) mem.dir={x:-mem.dir.x,y:-mem.dir.y};
+  if(Math.random()<0.2) mem.dir={x:Math.floor(Math.random()*17)-8, y:Math.floor(Math.random()*9)-4};
+  return {x:clamp(pos.x+mem.dir.x,0,W-1), y:clamp(pos.y+mem.dir.y,0,H-1)};
+}
+
+function start(role){
+  S={role, half:1, turn:1, pos:{x:10,y:10}, prev:null, myScore:0, botScore:0, hist:[], mem:{}, pending:null, phase:'play', demo:false};
+  logEl.textContent='';
+  log(`―― 前半：あなたは${role==='esc'?'逃げ手':'狩り手'} ――`);
+  render();
+}
+function demo(){
+  S={role:'esc', half:1, turn:1, pos:{x:10,y:10}, prev:null, myScore:0, botScore:0, hist:[], mem:{}, mem2:{}, pending:null, phase:'play', demo:true};
+  logEl.textContent=''; log('―― 観戦：ボット同士 ――'); render(); setTimeout(demoStep, 700);
+}
+function demoStep(){
+  if(!S || S.phase==='done') return;
+  const hunt=botHunt(S.hist,S.pos,S.prev);
+  const next=botEsc(S.hist,S.pos,S.mem2);
+  resolve(next,hunt); if(S && S.phase!=='done') setTimeout(demoStep, 700);
+}
+function clickCell(x,y){
+  if(!S||S.phase!=='play'||S.demo) return;
+  const p={x,y};
+  if(S.role==='esc'){
+    if(md(S.pos,p)>MOVE){ msg('移動は12マスまで'); return; }
+    const hunt=botHunt(S.hist,S.pos,S.prev);
+    resolve(p,hunt);
+  } else {
+    const next=botEsc(S.hist,S.pos,S.mem);
+    resolve(next,p);
+  }
+}
+function resolve(next,hunt){
+  const d=md(next,hunt);
+  const iAmEsc = (S.half===1) === (S.role==='esc') || S.demo;
+  let txt=`${S.half===1?'前半':'後半'} T${S.turn}: 的(${next.x},${next.y}) 予測(${hunt.x},${hunt.y}) 距離${d} → `;
+  if(d<=3){ txt+='直撃！狩り手+5'; if(iAmEsc&&!S.demo)S.botScore+=5; else S.myScore+=5; if(S.demo)S.myScore+=5; }
+  else if(d<=6){ txt+='かすり 狩り手+2'; if(iAmEsc&&!S.demo)S.botScore+=2; else S.myScore+=2; if(S.demo)S.myScore+=2; }
+  else { txt+='外れ 逃げ手+1'; if(iAmEsc&&!S.demo)S.myScore+=1; else S.botScore+=1; if(S.demo)S.botScore+=1; }
+  log(txt);
+  S.hist.push({esc:next,hunt,dist:d});
+  S.prev=S.pos; S.pos=next; S.lastHunt=hunt; S.lastD=d;
+  S.turn++;
+  if(S.turn>TURNS){
+    if(S.half===1){ S.half=2; S.turn=1; S.pos={x:10,y:10}; S.prev=null; S.mem={}; S.mem2={}; log(`―― 後半：役割交代 ――`); }
+    else { S.phase='done'; log(`―― 終了：あなた ${S.myScore} / 相手 ${S.botScore} ――`); }
+  }
+  render();
+}
+function render(){
+  cells.forEach((c,i)=>{ c.className='cell'; });
+  if(!S){ scoreEl.textContent='役を選んで開始'; return; }
+  const p=S.pos;
+  cells[idx(p.x,p.y)].classList.add('esc');
+  if(S.lastHunt) cells[idx(S.lastHunt.x,S.lastHunt.y)].classList.add('hunt', S.lastD<=3?'hit3':(S.lastD<=6?'hit6':''));
+  const iAmEscNow = S.demo ? false : ((S.half===1)===(S.role==='esc'));
+  if(S.phase==='play' && !S.demo && iAmEscNow){
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++) if(md(p,{x,y})<=MOVE) cells[idx(x,y)].classList.add('reach');
+  }
+  scoreEl.innerHTML = S.demo
+    ? `観戦中 / 狩り手役 ${S.myScore} : 逃げ手役 ${S.botScore}`
+    : `あなた ${S.myScore} : ${S.botScore} 相手<br><span class="turn">${S.phase==='done'?'終了':(S.half===1?'前半':'後半')+' '+Math.min(S.turn,TURNS)+'/'+TURNS+'ターン'}</span> ${S.phase==='done'?'':(iAmEscNow?'― 的の移動先をクリック':'― 狩り手：次の位置をクリック')}`;
+  if(S.phase==='play'&&!S.demo) msg(iAmEscNow?'緑の範囲が移動できる所':'相手の癖を読んで1マス選ぶ');
+}
+function msg(t){ msgEl.innerHTML='<div style="margin-top:6px;">'+t+'</div>'; }
+function log(t){ logEl.textContent+=t+'\n'; logEl.scrollTop=logEl.scrollHeight; }
+render();
+</script>
+</body>
+</html>
