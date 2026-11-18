@@ -1249,10 +1249,25 @@ if (request.method === 'POST' && path === '/api/memo') {
 }
 
 // ─── まちぶせ対戦 /api/machibuse ──────────────────────────────
-// GET  /api/machibuse : ゲーム状態（公開）
+// GET  /api/machibuse : ゲーム状態（deadline付き）
 // POST /api/machibuse : { kote, action:'reset'|'join'|'place', purified, [role, x, y] }
+// タイムアウト: 1ターン3分。逃げ手超過→その場留まり、狩り手超過→無効手(逃げ手+1)
+const MBUSE_TIMEOUT = 180000; // 3分
+const mbAdvanceTurn = (game) => {
+  const mmd = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  game.turn++;
+  if (game.turn > 10) {
+    if (game.half === 1) {
+      game.half = 2; game.turn = 1;
+      const tmp = game.esc_kote; game.esc_kote = game.hunt_kote; game.hunt_kote = tmp;
+      game.esc_pos = { x: 10, y: 10 }; game.phase = 'esc_turn';
+    } else { game.phase = 'done'; }
+  } else { game.phase = 'esc_turn'; }
+  game.turn_started_at = Date.now();
+};
 if (request.method === 'GET' && path === '/api/machibuse') {
   const game = await kv.get('machibuse_game', 'json') || { phase: 'idle', log: [], scores: { esc: 0, hunt: 0 } };
+  if (game.turn_started_at) game.deadline = game.turn_started_at + MBUSE_TIMEOUT;
   return json(game);
 }
 if (request.method === 'POST' && path === '/api/machibuse') {
@@ -1261,11 +1276,12 @@ if (request.method === 'POST' && path === '/api/machibuse') {
   if (!kote) return json({ error: 'kote required' }, 400);
   const todayKey = `HEALING${getJSTYmd() % 7}ARIGATO`;
   if (body.purified !== 'gate_oath' && !kote.includes('◆' + todayKey)) return json({ error: 'gate oath required' }, 403);
-  const defGame = { phase: 'idle', half: 1, turn: 1, esc_kote: null, hunt_kote: null, esc_pos: { x: 10, y: 10 }, esc_placed: null, hunt_placed: null, scores: { esc: 0, hunt: 0 }, log: [] };
+  const defGame = { phase: 'idle', half: 1, turn: 1, esc_kote: null, hunt_kote: null, esc_pos: { x: 10, y: 10 }, esc_placed: null, hunt_placed: null, scores: { esc: 0, hunt: 0 }, log: [], turn_started_at: null };
   const game = await kv.get('machibuse_game', 'json') || defGame;
   if (body.action === 'reset') {
-    const ng = { ...defGame, phase: 'esc_turn', esc_kote: game.esc_kote, hunt_kote: game.hunt_kote, updated: Date.now() };
+    const ng = { ...defGame, phase: 'esc_turn', esc_kote: game.esc_kote, hunt_kote: game.hunt_kote, updated: Date.now(), turn_started_at: Date.now() };
     await kv.put('machibuse_game', JSON.stringify(ng));
+    ng.deadline = ng.turn_started_at + MBUSE_TIMEOUT;
     return json({ ok: true, game: ng });
   }
   if (body.action === 'join') {
@@ -1278,38 +1294,51 @@ if (request.method === 'POST' && path === '/api/machibuse') {
     } else return json({ error: 'role must be esc or hunt' }, 400);
     game.updated = Date.now();
     await kv.put('machibuse_game', JSON.stringify(game));
+    if (game.turn_started_at) game.deadline = game.turn_started_at + MBUSE_TIMEOUT;
     return json({ ok: true, game });
   }
   if (body.action === 'place') {
-    const x = parseInt(body.x), y = parseInt(body.y);
-    if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) return json({ error: 'invalid position' }, 400);
     const mmd = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+    const now = Date.now();
+    const timedOut = game.turn_started_at && (now - game.turn_started_at) > MBUSE_TIMEOUT;
     if (body.role === 'esc') {
       if (game.phase !== 'esc_turn') return json({ error: 'not esc turn' }, 409);
       if (game.esc_kote !== kote) return json({ error: 'not your role' }, 403);
-      if (mmd(game.esc_pos, { x, y }) > 12) return json({ error: 'move too far (max 12)' }, 400);
-      game.esc_placed = { x, y }; game.phase = 'hunt_turn'; game.updated = Date.now();
+      if (timedOut) {
+        // タイムアウト: その場留まり
+        game.esc_placed = { ...game.esc_pos };
+        game.log.push({ half: game.half, turn: game.turn, timeout: 'esc', note: 'タイムアウト（その場留まり）' });
+      } else {
+        const x = parseInt(body.x), y = parseInt(body.y);
+        if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) return json({ error: 'invalid position' }, 400);
+        if (mmd(game.esc_pos, { x, y }) > 12) return json({ error: 'move too far (max 12)' }, 400);
+        game.esc_placed = { x, y };
+      }
+      game.phase = 'hunt_turn'; game.updated = Date.now();
       await kv.put('machibuse_game', JSON.stringify(game));
+      game.deadline = game.turn_started_at + MBUSE_TIMEOUT;
       return json({ ok: true, game });
     }
     if (body.role === 'hunt') {
       if (game.phase !== 'hunt_turn') return json({ error: 'not hunt turn' }, 409);
       if (game.hunt_kote !== kote) return json({ error: 'not your role' }, 403);
-      const esc = game.esc_placed, hunt = { x, y }, d = mmd(esc, hunt);
-      let result, eg = 0, hg = 0;
-      if (d <= 3) { result = '直撃'; hg = 5; } else if (d <= 6) { result = 'かすり'; hg = 2; } else { result = '外れ'; eg = 1; }
+      let esc = game.esc_placed, hunt, d, result, eg = 0, hg = 0;
+      if (timedOut) {
+        // タイムアウト: 無効手（逃げ手+1）
+        hunt = { x: -1, y: -1 }; d = 999; result = '無効（狩り手タイムアウト）'; eg = 1;
+      } else {
+        const x = parseInt(body.x), y = parseInt(body.y);
+        if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) return json({ error: 'invalid position' }, 400);
+        hunt = { x, y }; d = mmd(esc, hunt);
+        if (d <= 3) { result = '直撃'; hg = 5; } else if (d <= 6) { result = 'かすり'; hg = 2; } else { result = '外れ'; eg = 1; }
+      }
       game.scores.esc += eg; game.scores.hunt += hg;
       game.log.push({ half: game.half, turn: game.turn, esc, hunt, dist: d, result, escGain: eg, huntGain: hg });
-      game.esc_pos = esc; game.esc_placed = null; game.hunt_placed = null; game.turn++;
-      if (game.turn > 10) {
-        if (game.half === 1) {
-          game.half = 2; game.turn = 1;
-          const tmp = game.esc_kote; game.esc_kote = game.hunt_kote; game.hunt_kote = tmp;
-          game.esc_pos = { x: 10, y: 10 }; game.phase = 'esc_turn';
-        } else { game.phase = 'done'; }
-      } else { game.phase = 'esc_turn'; }
+      game.esc_pos = esc; game.esc_placed = null; game.hunt_placed = null;
+      mbAdvanceTurn(game);
       game.updated = Date.now();
       await kv.put('machibuse_game', JSON.stringify(game));
+      if (game.turn_started_at) game.deadline = game.turn_started_at + MBUSE_TIMEOUT;
       return json({ ok: true, game });
     }
     return json({ error: 'role must be esc or hunt' }, 400);
