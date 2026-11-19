@@ -1375,15 +1375,22 @@ if (request.method === 'POST' && path === '/api/machibuse') {
     const now = Date.now();
     const timedOut = game.turn_started_at && (now - game.turn_started_at) > MBUSE_TIMEOUT;
     if (body.role === 'esc') {
-      if (game.phase !== 'esc_turn') return json({ error: 'not esc turn' }, 409);
-      if (game.esc_kote !== kote) return json({ error: 'not your role' }, 403);
+      if (game.phase !== 'esc_turn') {
+        // esc がすでに置いて hunt 待ちの場合と、真の phase 違いを区別する
+        const alreadyPlaced = game.phase === 'hunt_turn' && game.esc_kote === kote;
+        const diagInfo = { phase: game.phase, half: game.half, turn: game.turn, esc_pos: game.esc_pos };
+        if (alreadyPlaced) return json({ error: 'already placed, waiting for hunt', ...diagInfo }, 409);
+        return json({ error: 'not esc turn', ...diagInfo }, 409);
+      }
+      if (game.esc_kote !== kote) return json({ error: 'not your role', esc_kote: game.esc_kote }, 403);
       if (timedOut) {
         game.esc_placed = { ...game.esc_pos };
         game.log.push({ half: game.half, turn: game.turn, timeout: 'esc', note: 'タイムアウト（その場留まり）' });
       } else {
         const x = parseInt(body.x), y = parseInt(body.y);
-        if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) return json({ error: 'invalid position' }, 400);
-        if (mmd(game.esc_pos, { x, y }) > 12) return json({ error: 'move too far (max 12)' }, 400);
+        if (isNaN(x) || isNaN(y) || x < 0 || x >= 20 || y < 0 || y >= 20) return json({ error: 'invalid position', x: body.x, y: body.y }, 400);
+        const dist = mmd(game.esc_pos, { x, y });
+        if (dist > 12) return json({ error: 'move too far (max 12)', esc_pos: game.esc_pos, target: { x, y }, dist }, 400);
         game.esc_placed = { x, y };
       }
       game.phase = 'hunt_turn'; game.updated = Date.now();
@@ -1392,8 +1399,13 @@ if (request.method === 'POST' && path === '/api/machibuse') {
       return json({ ok: true, game });
     }
     if (body.role === 'hunt') {
-      if (game.phase !== 'hunt_turn') return json({ error: 'not hunt turn' }, 409);
-      if (game.hunt_kote !== kote) return json({ error: 'not your role' }, 403);
+      if (game.phase !== 'hunt_turn') {
+        const alreadyPlaced = game.phase === 'esc_turn' && game.hunt_kote === kote;
+        const diagInfo = { phase: game.phase, half: game.half, turn: game.turn };
+        if (alreadyPlaced) return json({ error: 'already placed, waiting for esc', ...diagInfo }, 409);
+        return json({ error: 'not hunt turn', ...diagInfo }, 409);
+      }
+      if (game.hunt_kote !== kote) return json({ error: 'not your role', hunt_kote: game.hunt_kote }, 403);
       let esc = game.esc_placed, hunt, d, result, eg = 0, hg = 0;
       if (timedOut) {
         hunt = { x: -1, y: -1 }; d = 999; result = '無効（狩り手タイムアウト）'; eg = 1;
