@@ -1352,6 +1352,12 @@ if (request.method === 'POST' && path === '/api/machibuse') {
   const defGame = { phase: 'idle', half: 1, turn: 1, esc_kote: null, hunt_kote: null, esc_pos: { x: 10, y: 10 }, esc_placed: null, hunt_placed: null, scores: { esc: 0, hunt: 0 }, log: [], turn_started_at: null };
   const game = await kv.get('machibuse_game', 'json') || defGame;
   if (body.action === 'reset') {
+    // 対戦中（esc_turn / hunt_turn）は参加者のみリセット可
+    const activePhases = ['esc_turn', 'hunt_turn'];
+    if (activePhases.includes(game.phase)) {
+      const isParticipant = kote === game.esc_kote || kote === game.hunt_kote;
+      if (!isParticipant) return json({ error: 'reset not allowed: game in progress', phase: game.phase }, 403);
+    }
     const ng = { ...defGame, phase: 'esc_turn', esc_kote: game.esc_kote, hunt_kote: game.hunt_kote, updated: Date.now(), turn_started_at: Date.now() };
     await kv.put('machibuse_game', JSON.stringify(ng));
     ng.deadline = ng.turn_started_at + MBUSE_TIMEOUT;
